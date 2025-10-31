@@ -25,6 +25,22 @@ async function main() {
       await httpTransport.close();
       process.exit(0);
     });
+  } else if (transportType.toLowerCase() === "both") {
+    // Start both HTTP/WebSocket and stdio simultaneously
+    const httpTransport = createHttpTransport(server, port);
+    const stdioTransport = createStdioTransport(server);
+
+    await Promise.all([httpTransport.start(), stdioTransport.start()]);
+
+    process.on("SIGINT", async () => {
+      await Promise.all([httpTransport.close(), stdioTransport.close()]);
+      process.exit(0);
+    });
+
+    process.on("SIGTERM", async () => {
+      await Promise.all([httpTransport.close(), stdioTransport.close()]);
+      process.exit(0);
+    });
   } else {
     // Default to stdio transport
     const stdioTransport = createStdioTransport(server);
