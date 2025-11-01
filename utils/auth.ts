@@ -44,6 +44,17 @@ export async function createAuthClient(): Promise<any> {
   const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
   const privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
+  // Check if OAuth credentials are placeholder values
+  const isPlaceholder = oauthClientId?.includes("your-client-id") || 
+                        oauthClientSecret?.includes("your-client-secret") ||
+                        oauthTokenPath?.includes("your-path");
+  
+  if (isPlaceholder) {
+    throw new Error(
+      "OAuth credentials appear to be placeholder values. Please update your .env file with actual Google OAuth credentials from https://console.cloud.google.com/apis/credentials"
+    );
+  }
+
   if (oauthClientId && oauthClientSecret && oauthTokenPath) {
     const oAuth2Client = new google.auth.OAuth2(
       oauthClientId,
@@ -54,14 +65,77 @@ export async function createAuthClient(): Promise<any> {
     try {
       const tokens = loadTokensFromFile(oauthTokenPath);
       oAuth2Client.setCredentials(tokens);
+      
+      // Test the credentials by trying to refresh (if we have a refresh token)
+      if (tokens.refresh_token) {
+        try {
+          await oAuth2Client.refreshAccessToken();
+        } catch (refreshError: any) {
+          if (refreshError?.response?.data?.error === "invalid_client" || 
+              refreshError?.code === 401) {
+            throw new Error(
+              `Invalid OAuth credentials. The client ID or client secret in your .env file is incorrect.\n` +
+              `Please verify your credentials at https://console.cloud.google.com/apis/credentials\n` +
+              `Error: ${refreshError.message || "invalid_client"}`
+            );
+          }
+          // If it's just a missing/invalid refresh token, we'll initiate OAuth flow
+          if (refreshError?.message?.includes("invalid_grant") || 
+              refreshError?.message?.includes("Token has been expired")) {
+            console.warn("⚠️  Refresh token expired or invalid. Will initiate OAuth flow...");
+            throw refreshError; // Re-throw to trigger OAuth flow
+          }
+          throw refreshError;
+        }
+      }
+      
       return oAuth2Client;
-    } catch (error) {
-      // Tokens not found or invalid, initiate OAuth flow and wait for completion
-      await initiateOAuthFlow();
-      // After flow completes, load the newly saved tokens
-      const tokens = loadTokensFromFile(oauthTokenPath);
-      oAuth2Client.setCredentials(tokens);
-      return oAuth2Client;
+    } catch (error: any) {
+      // Check if it's an invalid_client error
+      if (error?.response?.data?.error === "invalid_client" || 
+          error?.code === 401 ||
+          error?.message?.includes("invalid_client")) {
+        throw new Error(
+          `Invalid OAuth client credentials. Please check:\n` +
+          `1. GOOGLE_OAUTH_CLIENT_ID is correct\n` +
+          `2. GOOGLE_OAUTH_CLIENT_SECRET is correct\n` +
+          `3. Credentials match your Google Cloud Console settings\n` +
+          `Get your credentials at: https://console.cloud.google.com/apis/credentials\n` +
+          `Original error: ${error.message || "invalid_client"}`
+        );
+      }
+      
+      // Tokens not found or invalid (but credentials are valid), initiate OAuth flow
+      if (error?.message?.includes("Error loading token file") || 
+          error?.message?.includes("invalid_grant") ||
+          error?.message?.includes("Token has been expired")) {
+        console.log("📋 No valid tokens found. Initiating OAuth flow...");
+        try {
+          await initiateOAuthFlow();
+          // After flow completes, load the newly saved tokens
+          const tokens = loadTokensFromFile(oauthTokenPath);
+          oAuth2Client.setCredentials(tokens);
+          return oAuth2Client;
+        } catch (oauthError: any) {
+          // Check if it's an invalid_client error during OAuth flow
+          if (oauthError?.response?.data?.error === "invalid_client" || 
+              oauthError?.code === 401 ||
+              oauthError?.message?.includes("invalid_client")) {
+            throw new Error(
+              `Invalid OAuth client credentials. Please check:\n` +
+              `1. GOOGLE_OAUTH_CLIENT_ID is correct\n` +
+              `2. GOOGLE_OAUTH_CLIENT_SECRET is correct\n` +
+              `3. Credentials match your Google Cloud Console settings\n` +
+              `Get your credentials at: https://console.cloud.google.com/apis/credentials\n` +
+              `Original error: ${oauthError.message || "invalid_client"}`
+            );
+          }
+          throw oauthError;
+        }
+      }
+      
+      // Re-throw other errors
+      throw error;
     }
   } else {
     // Fallback to service account
@@ -151,8 +225,26 @@ export async function handleOAuthCallback(code: string): Promise<void> {
     redirectUri
   );
 
-  const { tokens } = await oauth2Client.getToken(code);
-  saveTokensToFile(tokens, tokenPath);
+  try {
+    const { tokens } = await oauth2Client.getToken(code);
+    saveTokensToFile(tokens, tokenPath);
+  } catch (error: any) {
+    // Check if it's an invalid_client error
+    if (error?.response?.data?.error === "invalid_client" || 
+        error?.code === 401 ||
+        error?.message?.includes("invalid_client")) {
+      throw new Error(
+        `Invalid OAuth client credentials. Please check:\n` +
+        `1. GOOGLE_OAUTH_CLIENT_ID is correct\n` +
+        `2. GOOGLE_OAUTH_CLIENT_SECRET is correct\n` +
+        `3. Credentials match your Google Cloud Console settings\n` +
+        `4. Make sure you're using "Desktop app" type OAuth credentials\n` +
+        `Get your credentials at: https://console.cloud.google.com/apis/credentials\n` +
+        `Original error: ${error.message || "invalid_client"}`
+      );
+    }
+    throw error;
+  }
 }
 
 export async function refreshTokens(): Promise<string> {

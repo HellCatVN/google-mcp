@@ -23,13 +23,12 @@
     "google-mcp": "./index.ts"
   },
   "scripts": {
-    "build": "bun build index.ts --outfile=dist/index.js --target=node --minify",
-    "dev": "bun run index.ts",
-    "dev:http": "MCP_TRANSPORT=http PORT=3000 bun run index.ts",
-    "dev:stdio": "MCP_TRANSPORT=stdio bun run index.ts",
-    "start:http": "MCP_TRANSPORT=http bun run index.ts",
-    "start:stdio": "MCP_TRANSPORT=stdio bun run index.ts",
-    "test": "bun test"
+    "dev": "bun index.ts",
+    "start": "bun index.ts",
+    "bridge": "bun bridge.ts",
+    "bridge:dev": "NODE_ENV=development DEBUG=true bun bridge.ts",
+    "bun:build": "bun build index.ts --outfile=dist/index.js --target=node --minify",
+    "bun:test": "bun test"
   },
   "devDependencies": {
     "@types/bun": "^1.2.21",
@@ -39,9 +38,12 @@
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.4",
+    "@modelcontextprotocol/sdk": "^1.20.2",
+    "@types/ws": "^8.18.1",
+    "dotenv": "^16.4.5",
     "googleapis": "^159.0.0",
     "mime-types": "^3.0.1",
-    "open": "^10.2.0"
+    "open": "^10.2.0",
+    "ws": "^8.18.3"
   }
 }

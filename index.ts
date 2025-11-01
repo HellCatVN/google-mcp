@@ -1,18 +1,65 @@
 #!/usr/bin/env bun
-import { createGoogleMcpServer } from "./server-setup";
-import { createHttpTransport } from "./transports/http";
-import { createStdioTransport } from "./transports/stdio";
+// Load environment variables from .env file
+// This must be imported first before any other code that uses process.env
+import dotenv from "dotenv";
+
+// Load .env file from project root (dotenv.config() looks for .env in cwd by default)
+dotenv.config();
+
+// CRITICAL: Check if we're being spawned by bridge (piped stdin) BEFORE checking MCP_ENDPOINT
+// When bridge spawns us, stdin is piped, so we should run in stdio mode, not bridge mode
+// This prevents infinite recursion even if .env file has MCP_ENDPOINT
+const isPiped = !process.stdin.isTTY;
+
+// Auto-detect mode: only check MCP_ENDPOINT if we're NOT piped (not spawned by bridge)
+// If piped, we MUST run in stdio mode to avoid recursion
+// Also check if MCP_ENDPOINT was explicitly removed (bridge sets it to undefined)
+const MCP_ENDPOINT = isPiped ? undefined : (process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
 
 async function main() {
+  if (MCP_ENDPOINT && !isPiped) {
+    // Bridge mode: connect to external WebSocket endpoint
+    // Dynamically import and run bridge.ts (it has its own main() function and error handling)
+    console.log("🔗 Bridge mode detected (MCP_ENDPOINT is set)");
+    console.log(`   Endpoint: ${MCP_ENDPOINT.replace(/token=[^&]+/, "token=***")}`);
+    await import("./bridge.js");
+  } else {
+    // HTTP server mode or stdio mode (spawned by bridge)
+    await runHttpServer();
+  }
+}
+
+async function runHttpServer() {
+  const { createGoogleMcpServer } = await import("./server-setup.js");
+  const { createHttpTransport } = await import("./transports/http.js");
+  const { StdioServerTransport } = await import("@modelcontextprotocol/sdk/server/stdio.js");
+
   // Create the MCP server instance
   const server = createGoogleMcpServer();
 
-  // Check transport type from environment variable
-  const transportType = process.env.MCP_TRANSPORT || "stdio";
-  const port = parseInt(process.env.PORT || "3000");
+  // Detect if we're being piped (spawned by bridge) by checking if stdin is a TTY
+  // When bridge spawns us, stdin is a pipe, not a TTY
+  const isPiped = !process.stdin.isTTY;
 
-  if (transportType.toLowerCase() === "http") {
-    const httpTransport = createHttpTransport(server, port);
+  if (isPiped) {
+    // Stdio mode - spawned by bridge, communicate via stdin/stdout
+    const stdioTransport = new StdioServerTransport();
+    await server.connect(stdioTransport);
+
+    // Handle graceful shutdown
+    process.on("SIGINT", async () => {
+      await stdioTransport.close();
+      process.exit(0);
+    });
+
+    process.on("SIGTERM", async () => {
+      await stdioTransport.close();
+      process.exit(0);
+    });
+  } else {
+    // HTTP transport mode - running directly
+    const port = parseInt(process.env.PORT || "3000");
+    const httpTransport = await createHttpTransport(server, port);
     await httpTransport.start();
 
     // Handle graceful shutdown
@@ -25,41 +72,16 @@ async function main() {
       await httpTransport.close();
       process.exit(0);
     });
-  } else if (transportType.toLowerCase() === "both") {
-    // Start both HTTP/WebSocket and stdio simultaneously
-    const httpTransport = createHttpTransport(server, port);
-    const stdioTransport = createStdioTransport(server);
-
-    await Promise.all([httpTransport.start(), stdioTransport.start()]);
-
-    process.on("SIGINT", async () => {
-      await Promise.all([httpTransport.close(), stdioTransport.close()]);
-      process.exit(0);
-    });
-
-    process.on("SIGTERM", async () => {
-      await Promise.all([httpTransport.close(), stdioTransport.close()]);
-      process.exit(0);
-    });
-  } else {
-    // Default to stdio transport
-    const stdioTransport = createStdioTransport(server);
-    await stdioTransport.start();
-
-    // Handle graceful shutdown
-    process.on("SIGINT", async () => {
-      await stdioTransport.close();
-      process.exit(0);
-    });
-
-    process.on("SIGTERM", async () => {
-      await stdioTransport.close();
-      process.exit(0);
-    });
   }
 }
 
-// Start the server
+// Start the server with error handling
 main().catch((error) => {
+  console.error("\n💥 Fatal Error:", error.message);
+  if (error.message.includes("Authentication") || error.message.includes("OAuth") || error.message.includes("invalid_client")) {
+    console.error("\n💡 Authentication Setup Required:");
+    console.error("   Please configure your .env file with valid Google OAuth credentials.");
+    console.error("   See template.env for reference.\n");
+  }
   process.exit(1);
 });

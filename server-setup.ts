@@ -46,14 +46,23 @@ export function createGoogleMcpServer() {
   );
 
   // Handle the "list tools" request
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools,
-  }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => {
+    console.log(`📋 Tools list requested - returning ${tools.length} tools`);
+    const toolsList = {
+      tools,
+    };
+    // Log first few tool names for debugging
+    if (tools.length > 0) {
+      console.log(`   Sample tools: ${tools.slice(0, 5).map(t => t.name).join(", ")}...`);
+    }
+    return toolsList;
+  });
 
   // Handle the "call tool" request
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
       const { name, arguments: args } = request.params;
+      console.log(`🔧 Tool call requested: ${name}`);
       if (!args) throw new Error("No arguments provided");
 
       // Handle OAuth tools first (don't require initialization)
@@ -289,8 +298,21 @@ export function createGoogleMcpServer() {
       googleGmailInstance = new GoogleGmail(authClient);
       googleDriveInstance = new GoogleDrive(authClient);
       googleTasksInstance = new GoogleTasks(authClient);
+      console.log("✅ Google services initialized successfully");
     })
     .catch((error) => {
+      console.error("\n❌ Authentication Error:");
+      console.error(error.message);
+      if (error.message.includes("placeholder") || error.message.includes("invalid_client")) {
+        console.error("\n💡 To fix this:");
+        console.error("   1. Go to https://console.cloud.google.com/apis/credentials");
+        console.error("   2. Create OAuth 2.0 credentials (Desktop app type)");
+        console.error("   3. Update your .env file with:");
+        console.error("      GOOGLE_OAUTH_CLIENT_ID=<your-actual-client-id>");
+        console.error("      GOOGLE_OAUTH_CLIENT_SECRET=<your-actual-client-secret>");
+        console.error("      GOOGLE_OAUTH_TOKEN_PATH=~/.google-mcp/tokens.json");
+        console.error("\n⚠️  The server will continue running, but tools will fail until authentication is configured.\n");
+      }
       throw error;
     });
 
