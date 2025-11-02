@@ -1,9 +1,17 @@
 // Load environment variables from .env file
 // This must be imported first before any other code that uses process.env
 import dotenv from "dotenv";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
-// Load .env file from project root (dotenv.config() looks for .env in cwd by default)
-dotenv.config();
+// Get the directory of the current module (works in ES modules)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load .env file from project root using absolute path
+// This ensures it works even when PM2 runs from a different working directory
+const envPath = join(__dirname, ".env");
+dotenv.config({ path: envPath });
 
 // CRITICAL: Check if we're being spawned by bridge (piped stdin) BEFORE checking MCP_ENDPOINT
 // When bridge spawns us, stdin is piped, so we should run in stdio mode, not bridge mode

@@ -15,9 +15,6 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
 
-// Load environment variables
-dotenv.config();
-
 // Configuration from environment
 const ENDPOINT = process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0];
 const DEBUG_MODE = process.env.DEBUG === "true" || process.env.NODE_ENV === "development";
@@ -26,6 +23,11 @@ const MAX_BACKOFF = 600; // 10 minutes (600 seconds)
 const TARGET_SERVER = process.env.MCP_SERVER_NAME || "google-mcp";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Load environment variables from .env file using absolute path
+// This ensures it works even when PM2 runs from a different working directory
+const envPath = join(__dirname, ".env");
+dotenv.config({ path: envPath });
 
 // State
 let ws: WebSocket | null = null;
