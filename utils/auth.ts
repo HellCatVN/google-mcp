@@ -21,6 +21,7 @@ const projectRoot = path.resolve(__dirname, "..");
  * - ~ (home directory expansion)
  * - Relative paths (resolved from project root)
  * - Absolute paths (returned as-is)
+ * - Special case: paths starting with "/" that are meant to be relative (like "/.google-mcp/tokens.json")
  */
 function resolveTokenPath(tokenPath: string): string {
   // Expand ~ to home directory
@@ -29,9 +30,30 @@ function resolveTokenPath(tokenPath: string): string {
     tokenPath = tokenPath.replace("~", homeDir);
   }
   
+  // Special case: handle paths that start with "/" but might be meant as relative
+  // e.g., "/.google-mcp/tokens.json" -> ".google-mcp/tokens.json" (relative to project root)
+  // This is a common mistake in .env files
+  if (tokenPath.startsWith("/.") && !tokenPath.startsWith("/home") && !tokenPath.startsWith("/root")) {
+    // Remove the leading "/" to make it relative
+    const relativePath = tokenPath.substring(1);
+    const resolvedPath = path.resolve(projectRoot, relativePath);
+    console.log(`   ⚠️  Path starts with "/" but treated as relative. Original: ${tokenPath}, Resolved: ${resolvedPath}`);
+    return path.normalize(resolvedPath);
+  }
+  
   // If it's already absolute, normalize and return
   if (path.isAbsolute(tokenPath)) {
-    return path.normalize(tokenPath);
+    // Check if the absolute path exists, if not, try treating it as relative to project root
+    const normalized = path.normalize(tokenPath);
+    if (!fs.existsSync(normalized)) {
+      // Try as relative path from project root
+      const relativeAttempt = path.resolve(projectRoot, tokenPath.substring(1)); // Remove leading /
+      if (fs.existsSync(relativeAttempt)) {
+        console.log(`   ℹ️  Absolute path not found, using project-relative path instead: ${relativeAttempt}`);
+        return relativeAttempt;
+      }
+    }
+    return normalized;
   }
   
   // If it's relative, resolve from project root
