@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 // Load environment variables from .env file
 // This must be imported first before any other code that uses process.env
 import dotenv from "dotenv";

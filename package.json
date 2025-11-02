@@ -20,19 +20,23 @@
     "claude"
   ],
   "bin": {
-    "google-mcp": "./index.ts"
+    "google-mcp": "tsx index.ts"
   },
   "scripts": {
-    "dev": "bun index.ts",
-    "start": "bun index.ts",
-    "bridge": "bun bridge.ts",
-    "bridge:dev": "NODE_ENV=development DEBUG=true bun bridge.ts",
-    "bun:build": "bun build index.ts --outfile=dist/index.js --target=node --minify",
-    "bun:test": "bun test"
+    "dev": "tsx index.ts",
+    "start": "tsx index.ts",
+    "bridge": "tsx bridge.ts",
+    "bridge:dev": "cross-env NODE_ENV=development DEBUG=true tsx bridge.ts",
+    "build": "tsc",
+    "test": "vitest"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.21",
-    "@types/mime-types": "^3.0.1"
+    "@types/mime-types": "^3.0.1",
+    "@types/node": "^20.0.0",
+    "cross-env": "^7.0.3",
+    "tsx": "^4.7.0",
+    "vitest": "^1.2.0",
+    "typescript": "^5.9.2"
   },
   "peerDependencies": {
     "typescript": "^5.9.2"

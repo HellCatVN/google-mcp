@@ -1,4 +1,3 @@
-#!/usr/bin/env bun
 /**
  * WebSocket MCP Bridge
  * 
@@ -6,7 +5,7 @@
  * Follows MCP_NODE_DESIGN.MD specifications.
  * 
  * Usage:
- *   MCP_ENDPOINT=wss://api.xiaozhi.me/mcp/?token=... bun bridge.ts
+ *   MCP_ENDPOINT=wss://api.xiaozhi.me/mcp/?token=... pnpm run bridge
  */
 
 import dotenv from "dotenv";
@@ -14,6 +13,7 @@ import { WebSocket } from "ws";
 import { spawn, ChildProcess } from "child_process";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { existsSync } from "fs";
 
 // Load environment variables
 dotenv.config();
@@ -64,6 +64,46 @@ function log(message: string, ...args: any[]): void {
 }
 
 /**
+ * Detailed error logging function
+ * Always logs full error details regardless of DEBUG_MODE for better debugging
+ */
+function logError(title: string, error: any, context?: Record<string, any>): void {
+  const prefix = `[${TARGET_SERVER}]`;
+  const timestamp = new Date().toISOString();
+  const separator = "=".repeat(80);
+  
+  console.error(`\n${separator}`);
+  console.error(`${timestamp} ${prefix} ❌ ERROR: ${title}`);
+  console.error(separator);
+  
+  if (error instanceof Error) {
+    console.error(`Message: ${error.message}`);
+    if (error.stack) {
+      console.error(`Stack trace:\n${error.stack}`);
+    }
+    // Log additional error properties if they exist
+    if ('code' in error) {
+      console.error(`Error code: ${error.code}`);
+    }
+    if ('errno' in error) {
+      console.error(`Error number: ${error.errno}`);
+    }
+    if ('syscall' in error) {
+      console.error(`System call: ${error.syscall}`);
+    }
+  } else {
+    console.error(`Error details: ${JSON.stringify(error, null, 2)}`);
+  }
+  
+  if (context) {
+    console.error(`\nContext:`);
+    console.error(JSON.stringify(context, null, 2));
+  }
+  
+  console.error(separator + "\n");
+}
+
+/**
  * Sleep utility
  */
 function sleep(seconds: number): Promise<void> {
@@ -93,18 +133,45 @@ function terminateProcess(process: ChildProcess | null): void {
  */
 function spawnServerProcess(): ChildProcess {
   // Determine command based on environment
-  // For Bun runtime, we can run TypeScript directly
+  // Use tsx for TypeScript execution, or node for production builds
   const isProduction: boolean = process.env.NODE_ENV === "production";
-  const serverCmd: string = isProduction ? "node" : "bun";
   const serverPath: string = isProduction 
     ? join(__dirname, "index.js")
     : join(__dirname, "index.ts");
   
-  const serverArgs: string[] = [serverPath];
+  let serverCmd: string;
+  let serverArgs: string[];
   
-    if (DEBUG_MODE) {
-      log(`Starting server process: ${serverCmd} ${serverArgs.join(" ")}`);
+  if (isProduction) {
+    // Production: use node directly
+    serverCmd = "node";
+    serverArgs = [serverPath];
+  } else {
+    // Development: find tsx executable
+    // Try to find tsx in node_modules/.bin first
+    const tsxBinName = process.platform === "win32" ? "tsx.cmd" : "tsx";
+    const tsxPath = join(process.cwd(), "node_modules", ".bin", tsxBinName);
+    
+    if (existsSync(tsxPath)) {
+      // Use local tsx executable directly
+      // On Windows, .cmd files need shell execution
+      serverCmd = tsxPath;
+      serverArgs = [serverPath];
+    } else {
+      // Fallback: use npx via shell (more reliable cross-platform)
+      if (process.platform === "win32") {
+        serverCmd = "cmd";
+        serverArgs = ["/c", "npx", "tsx", serverPath];
+      } else {
+        serverCmd = "sh";
+        serverArgs = ["-c", `npx tsx "${serverPath}"`];
+      }
     }
+  }
+  
+  if (DEBUG_MODE) {
+    log(`Starting server process: ${serverCmd} ${serverArgs.join(" ")}`);
+  }
   
   // Spawn child process WITHOUT MCP_ENDPOINT so it runs in stdio mode, not bridge mode
   // This prevents infinite recursion: bridge spawns child → child would run bridge → spawns another child...
@@ -112,10 +179,15 @@ function spawnServerProcess(): ChildProcess {
   delete childEnv.MCP_ENDPOINT;
   delete childEnv.MCP_ENDPOINTS; // Also remove if it exists
   
+  // Use shell execution for .cmd files on Windows or when using cmd/sh fallback
+  const needsShell = process.platform === "win32" && 
+    (!isProduction && (serverCmd.endsWith(".cmd") || serverCmd === "cmd"));
+  
   const childProc = spawn(serverCmd, serverArgs, {
     stdio: ["pipe", "pipe", "pipe"], // stdin, stdout, stderr are all piped
     env: childEnv, // Environment without MCP_ENDPOINT
     cwd: process.cwd(),
+    shell: needsShell, // Use shell for Windows .cmd files
   });
   
   // Handle process exit
@@ -127,6 +199,19 @@ function spawnServerProcess(): ChildProcess {
     // Normal exits (code 0 or signal) shouldn't trigger WebSocket close
     // This prevents infinite reconnection loops when child exits normally
     if (code !== null && code !== 0 && ws && ws.readyState === WebSocket.OPEN) {
+      logError(
+        "Server process exited with error code",
+        new Error(`Process exited with code ${code}${signal ? ` (signal: ${signal})` : ""}`),
+        {
+          exitCode: code,
+          signal: signal,
+          command: serverCmd,
+          args: serverArgs,
+          cwd: process.cwd(),
+          platform: process.platform,
+          nodeEnv: process.env.NODE_ENV,
+        }
+      );
       log("Closing WebSocket due to server process error exit");
       ws.close();
     }
@@ -135,7 +220,15 @@ function spawnServerProcess(): ChildProcess {
   
   // Handle process errors
   childProc.on("error", (error: Error) => {
-    log(`Failed to spawn server process: ${error.message}`);
+    logError("Failed to spawn server process", error, {
+      command: serverCmd,
+      args: serverArgs,
+      cwd: process.cwd(),
+      platform: process.platform,
+      nodeEnv: process.env.NODE_ENV,
+      needsShell: needsShell,
+      tsxPath: !isProduction ? join(process.cwd(), "node_modules", ".bin", (process.platform === "win32" ? "tsx.cmd" : "tsx")) : undefined,
+    });
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.close();
     }
@@ -168,7 +261,15 @@ async function connectToServer(uri: string): Promise<void> {
       childProcess = spawnServerProcess();
       
       if (!childProcess.stdin || !childProcess.stdout) {
-        reject(new Error("Failed to spawn server process: stdin/stdout not available"));
+        const error = new Error("Failed to spawn server process: stdin/stdout not available");
+        logError("Server process streams not available", error, {
+          hasStdin: !!childProcess.stdin,
+          hasStdout: !!childProcess.stdout,
+          hasStderr: !!childProcess.stderr,
+          killed: childProcess.killed,
+          pid: childProcess.pid,
+        });
+        reject(error);
         return;
       }
       
@@ -187,9 +288,17 @@ async function connectToServer(uri: string): Promise<void> {
           
           if (childProcess?.stdin && !childProcess.stdin.destroyed) {
             childProcess.stdin.write(message + "\n");
+          } else {
+            throw new Error("Child process stdin is not available or destroyed");
           }
         } catch (error) {
-          log(`Error handling WebSocket message: ${error}`);
+          logError("Error handling WebSocket message", error, {
+            messagePreview: typeof data === "string" ? data.substring(0, 200) : "binary data",
+            messageLength: typeof data === "string" ? data.length : "unknown",
+            hasChildProcess: !!childProcess,
+            stdinAvailable: childProcess?.stdin && !childProcess.stdin.destroyed,
+            wsReadyState: ws?.readyState,
+          });
           // Continue processing (don't disconnect)
         }
       });
@@ -212,11 +321,19 @@ async function connectToServer(uri: string): Promise<void> {
                 ws.send(line);
               } catch (parseError) {
                 // Not valid JSON, skip it (might be console.log output)
+                if (DEBUG_MODE) {
+                  log(`Skipping non-JSON line: ${line.substring(0, 100)}`);
+                }
               }
             }
           }
         } catch (error) {
-          log(`Error sending to WebSocket: ${error}`);
+          logError("Error sending to WebSocket", error, {
+            dataPreview: data.toString().substring(0, 500),
+            dataLength: data.length,
+            wsReadyState: ws?.readyState,
+            hasChildProcess: !!childProcess,
+          });
           // Continue processing (don't kill process)
         }
       });
@@ -231,6 +348,22 @@ async function connectToServer(uri: string): Promise<void> {
       // Handle WebSocket close - reject promise to trigger reconnection
       ws!.on("close", (code, reason) => {
         log(`WebSocket closed: code=${code}, reason=${reason.toString()}`);
+        // Log detailed error if close was unexpected (not normal closure)
+        if (code !== 1000 && code !== 1001) {
+          logError(
+            "WebSocket closed unexpectedly",
+            new Error(`WebSocket closed with code ${code}: ${reason.toString()}`),
+            {
+              closeCode: code,
+              reason: reason.toString(),
+              reconnectAttempt: reconnectAttempt + 1,
+              hasChildProcess: !!childProcess,
+              childProcessPid: childProcess?.pid,
+              childProcessKilled: childProcess?.killed,
+              endpoint: uri.replace(/token=[^&]+/, "token=***"),
+            }
+          );
+        }
         if (childProcess) {
           terminateProcess(childProcess);
           childProcess = null;
@@ -240,7 +373,13 @@ async function connectToServer(uri: string): Promise<void> {
       
       // Handle WebSocket errors - reject promise to trigger reconnection
       ws!.on("error", (error) => {
-        log(`WebSocket error: ${error.message}`);
+        logError("WebSocket error", error, {
+          reconnectAttempt: reconnectAttempt + 1,
+          endpoint: uri.replace(/token=[^&]+/, "token=***"),
+          hasChildProcess: !!childProcess,
+          childProcessPid: childProcess?.pid,
+          wsReadyState: ws?.readyState,
+        });
         if (childProcess) {
           terminateProcess(childProcess);
           childProcess = null;
@@ -250,7 +389,10 @@ async function connectToServer(uri: string): Promise<void> {
     });
     
     ws.on("error", (error) => {
-      log(`WebSocket connection error: ${error.message}`);
+      logError("WebSocket connection error", error, {
+        endpoint: uri.replace(/token=[^&]+/, "token=***"),
+        reconnectAttempt: reconnectAttempt + 1,
+      });
       reject(error);
     });
   });

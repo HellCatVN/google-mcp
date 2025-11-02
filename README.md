@@ -23,8 +23,8 @@ Click below for one-click install with `.mcpb`:
 {
   "mcpServers": {
     "google-mcp": {
-      "command": "bunx",
-      "args": ["--no-cache", "google-mcp@latest"],
+      "command": "pnpm",
+      "args": ["--global", "exec", "google-mcp@latest"],
       "env": {
         // Either can be used, but not both
         // Use OAuth
@@ -174,10 +174,12 @@ You'll only need to click "Allow" in the browser - everything else is automated!
 
 1. Prerequisites:
 
-   - Install Bun:
+   - Install pnpm:
 
    ```bash
-   brew install oven-sh/bun/bun  # macOS/Linux with Homebrew
+   npm install -g pnpm  # Install pnpm globally
+   # Or using Homebrew on macOS/Linux:
+   # brew install pnpm
    ```
 
 2. Set Up OAuth:
@@ -194,8 +196,8 @@ You'll only need to click "Allow" in the browser - everything else is automated!
 {
   "mcpServers": {
     "google-mcp": {
-      "command": "bunx",
-      "args": ["--no-cache", "google-mcp@latest"],
+      "command": "pnpm",
+      "args": ["--global", "exec", "google-mcp@latest"],
       "env": {
         // Either can be used, but not both
         // Use OAuth
@@ -247,18 +249,18 @@ This MCP server supports both stdio and HTTP transports via environment variable
 
 ```bash
 # Default mode - uses stdio transport
-bun run dev
+pnpm run dev
 # Or explicitly
-MCP_TRANSPORT=stdio bun run index.ts
+MCP_TRANSPORT=stdio pnpm exec tsx index.ts
 ```
 
 ### HTTP Transport (Streamable HTTP)
 
 ```bash
 # HTTP mode with Streamable HTTP support
-MCP_TRANSPORT=http bun run index.ts
+MCP_TRANSPORT=http pnpm exec tsx index.ts
 # Or with custom port
-MCP_TRANSPORT=http PORT=3000 bun run index.ts
+MCP_TRANSPORT=http PORT=3000 pnpm exec tsx index.ts
 ```
 
 When running in HTTP mode, the server provides these endpoints:
@@ -296,13 +298,13 @@ For HTTP transport, configure your client with the server URL:
 ```bash
 git clone https://github.com/vakharwalad23/google-mcp.git
 cd google-mcp
-bun install
+pnpm install
 
 # Run in stdio mode (default)
-bun run dev:stdio
+pnpm run dev
 
 # Run in HTTP mode
-bun run dev:http
+MCP_TRANSPORT=http pnpm run dev
 ```
 
 Thank you for using Google MCP Tools! If you have any questions or suggestions, feel free to open an issue or contribute to the project.

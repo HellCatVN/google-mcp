@@ -8,8 +8,8 @@
     "jsx": "react-jsx",
     "allowJs": true,
 
-    // Bundler mode
-    "moduleResolution": "bundler",
+    // Node.js ESM mode (compatible with tsx)
+    "moduleResolution": "node16",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
