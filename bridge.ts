@@ -177,9 +177,13 @@ function spawnServerProcess(): ChildProcess {
   
   // Spawn child process WITHOUT MCP_ENDPOINT so it runs in stdio mode, not bridge mode
   // This prevents infinite recursion: bridge spawns child → child would run bridge → spawns another child...
+  // Set an explicit flag so the child knows it was spawned by bridge (even if PM2 env vars are inherited)
   const childEnv = { ...process.env };
   delete childEnv.MCP_ENDPOINT;
   delete childEnv.MCP_ENDPOINTS; // Also remove if it exists
+  // Set flag to indicate this process was spawned by bridge
+  // This must be checked FIRST in index.ts before PM2 detection to prevent recursion
+  childEnv.MCP_SPAWNED_BY_BRIDGE = "true";
   
   // Use shell execution for .cmd files on Windows or when using cmd/sh fallback
   const needsShell = process.platform === "win32" && 

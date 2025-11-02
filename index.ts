@@ -10,24 +10,21 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 // CRITICAL: Check if we're being spawned by bridge BEFORE loading .env file
-// When bridge spawns us, stdin is piped AND MCP_ENDPOINT is removed from environment
-// We need to detect this BEFORE loading .env, otherwise .env will set MCP_ENDPOINT again
-// and cause infinite recursion
-//
-// However, PM2 also pipes stdin, so we need to distinguish:
-// - PM2: piped stdin, but PM2 sets PM2_HOME or other PM2 env vars (should load MCP_ENDPOINT from .env)
-// - Bridge child: piped stdin, MCP_ENDPOINT explicitly removed, no PM2 env vars (should exclude MCP_ENDPOINT)
+// When bridge spawns us, it sets MCP_SPAWNED_BY_BRIDGE=true and removes MCP_ENDPOINT
+// We MUST check MCP_SPAWNED_BY_BRIDGE FIRST - this is the definitive signal
+// PM2 also pipes stdin, so checking stdin.isTTY alone is insufficient
+// 
+// Detection priority:
+// 1. MCP_SPAWNED_BY_BRIDGE=true → definitely spawned by bridge, exclude MCP_ENDPOINT from .env
+// 2. PM2 env vars present + MCP_ENDPOINT in .env → PM2 running bridge mode, load MCP_ENDPOINT
+// 3. Otherwise → check stdin and MCP_ENDPOINT presence
+
+// PRIMARY CHECK: Bridge sets this explicitly when spawning children
+const isSpawnedByBridge = process.env.MCP_SPAWNED_BY_BRIDGE === "true";
+
 const isPiped = !process.stdin.isTTY;
 const hasMcpEndpointBeforeEnv = !!(process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
-
-// Check if we're running under PM2 (PM2 sets various environment variables)
 const isPm2 = !!(process.env.PM2_HOME || process.env.pm_id !== undefined || process.env.name !== undefined);
-
-// We're spawned by bridge if:
-// - stdin is piped (not a TTY)
-// - MCP_ENDPOINT is not in environment (bridge removed it)
-// - NOT running under PM2 (PM2 also pipes stdin but should load MCP_ENDPOINT from .env)
-const isSpawnedByBridge = isPiped && !hasMcpEndpointBeforeEnv && !isPm2;
 
 // Load .env file from project root using absolute path
 // This ensures it works even when PM2 runs from a different working directory
@@ -74,12 +71,13 @@ const hasMcpEndpoint = !!(process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?
 
 // Debug logging for mode detection
 console.log("🔍 Mode detection:");
+console.log(`   MCP_SPAWNED_BY_BRIDGE: ${process.env.MCP_SPAWNED_BY_BRIDGE || 'NOT SET'}`);
 console.log(`   stdin.isTTY: ${process.stdin.isTTY}`);
 console.log(`   isPiped: ${isPiped}`);
 console.log(`   Running under PM2: ${isPm2}`);
 console.log(`   PM2 env vars: PM2_HOME=${process.env.PM2_HOME ? 'SET' : 'NOT SET'}, pm_id=${process.env.pm_id || 'NOT SET'}, name=${process.env.name || 'NOT SET'}`);
 console.log(`   MCP_ENDPOINT before .env: ${hasMcpEndpointBeforeEnv ? 'SET' : 'NOT SET'}`);
-console.log(`   Spawned by bridge: ${isSpawnedByBridge}`);
+console.log(`   Spawned by bridge: ${isSpawnedByBridge} (${isSpawnedByBridge ? 'explicit flag set' : 'not spawned by bridge'})`);
 console.log(`   MCP_ENDPOINT from env (after .env): ${process.env.MCP_ENDPOINT ? process.env.MCP_ENDPOINT.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
 console.log(`   MCP_ENDPOINTS from env (after .env): ${process.env.MCP_ENDPOINTS ? process.env.MCP_ENDPOINTS.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
 
