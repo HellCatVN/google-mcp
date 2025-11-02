@@ -88,8 +88,12 @@ function loadTokensFromFile(tokenPath: string): Credentials {
     console.log(`   Normalized path: ${normalizedPath}`);
     console.log(`   File exists: ${fs.existsSync(normalizedPath)}`);
     
+    let fileToLoad = normalizedPath;
+    
+    // If the exact file doesn't exist, try some common variations
     if (!fs.existsSync(normalizedPath)) {
       const dir = path.dirname(normalizedPath);
+      const basename = path.basename(normalizedPath);
       console.log(`   ⚠️  Token file not found at: ${normalizedPath}`);
       console.log(`   Directory exists: ${fs.existsSync(dir)}`);
       
@@ -98,6 +102,23 @@ function loadTokensFromFile(tokenPath: string): Credentials {
         try {
           const files = fs.readdirSync(dir);
           console.log(`   Directory contents: ${files.length > 0 ? files.join(", ") : "(empty)"}`);
+          
+          // Try common variations: token.json (without 's'), tokens.json (with 's')
+          const alternateNames = [
+            basename.replace('tokens.json', 'token.json'), // tokens.json -> token.json
+            basename.replace('token.json', 'tokens.json'), // token.json -> tokens.json
+          ];
+          
+          for (const altName of alternateNames) {
+            if (altName !== basename) {
+              const altPath = path.join(dir, altName);
+              if (fs.existsSync(altPath)) {
+                console.log(`   ✓ Found alternate token file: ${altPath}`);
+                fileToLoad = altPath;
+                break;
+              }
+            }
+          }
         } catch (e) {
           console.log(`   Could not read directory: ${e}`);
         }
@@ -105,10 +126,12 @@ function loadTokensFromFile(tokenPath: string): Credentials {
         console.log(`   Directory does not exist. Will be created when tokens are saved.`);
       }
       
-      throw new Error(`Token file not found at ${normalizedPath}`);
+      if (!fs.existsSync(fileToLoad)) {
+        throw new Error(`Token file not found at ${normalizedPath} (also checked common variations)`);
+      }
     }
     
-    return JSON.parse(fs.readFileSync(normalizedPath, "utf8"));
+    return JSON.parse(fs.readFileSync(fileToLoad, "utf8"));
   } catch (err) {
     const resolvedPath = resolveTokenPath(tokenPath);
     throw new Error(
