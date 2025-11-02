@@ -3,6 +3,7 @@
 import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import { existsSync } from "fs";
 
 // Get the directory of the current module (works in ES modules)
 const __filename = fileURLToPath(import.meta.url);
@@ -11,7 +12,18 @@ const __dirname = dirname(__filename);
 // Load .env file from project root using absolute path
 // This ensures it works even when PM2 runs from a different working directory
 const envPath = join(__dirname, ".env");
-dotenv.config({ path: envPath });
+console.log("🔍 Environment configuration:");
+console.log(`   Project root: ${__dirname}`);
+console.log(`   Current working directory: ${process.cwd()}`);
+console.log(`   .env file path: ${envPath}`);
+console.log(`   .env file exists: ${existsSync(envPath)}`);
+const result = dotenv.config({ path: envPath });
+if (result.error) {
+  console.log(`   ⚠️  Error loading .env: ${result.error.message}`);
+} else {
+  console.log(`   ✓ .env file loaded successfully`);
+  console.log(`   Loaded ${Object.keys(result.parsed || {}).length} environment variables`);
+}
 
 // CRITICAL: Check if we're being spawned by bridge (piped stdin) BEFORE checking MCP_ENDPOINT
 // When bridge spawns us, stdin is piped, so we should run in stdio mode, not bridge mode

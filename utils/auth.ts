@@ -58,6 +58,19 @@ function loadTokensFromFile(tokenPath: string): Credentials {
     // Resolve the path to absolute path
     const resolvedPath = resolveTokenPath(tokenPath);
     const normalizedPath = path.normalize(resolvedPath);
+    
+    // Debug logging
+    console.log("🔍 Token file path resolution:");
+    console.log(`   Raw path from env: ${tokenPath}`);
+    console.log(`   Resolved path: ${resolvedPath}`);
+    console.log(`   Normalized path: ${normalizedPath}`);
+    console.log(`   File exists: ${fs.existsSync(normalizedPath)}`);
+    
+    if (!fs.existsSync(normalizedPath)) {
+      console.log(`   ⚠️  Token file not found at: ${normalizedPath}`);
+      throw new Error(`Token file not found at ${normalizedPath}`);
+    }
+    
     return JSON.parse(fs.readFileSync(normalizedPath, "utf8"));
   } catch (err) {
     const resolvedPath = resolveTokenPath(tokenPath);
@@ -70,11 +83,22 @@ function loadTokensFromFile(tokenPath: string): Credentials {
 }
 
 export async function createAuthClient(): Promise<any> {
+  // Debug logging for environment and paths
+  console.log("🔍 Authentication configuration:");
+  console.log(`   Project root: ${projectRoot}`);
+  console.log(`   Current working directory: ${process.cwd()}`);
+  console.log(`   GOOGLE_OAUTH_CLIENT_ID: ${process.env.GOOGLE_OAUTH_CLIENT_ID ? '***' + process.env.GOOGLE_OAUTH_CLIENT_ID.slice(-10) : 'NOT SET'}`);
+  console.log(`   GOOGLE_OAUTH_CLIENT_SECRET: ${process.env.GOOGLE_OAUTH_CLIENT_SECRET ? '***' + process.env.GOOGLE_OAUTH_CLIENT_SECRET.slice(-4) : 'NOT SET'}`);
+  console.log(`   GOOGLE_OAUTH_TOKEN_PATH (raw): ${process.env.GOOGLE_OAUTH_TOKEN_PATH || 'NOT SET'}`);
+  
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   const oauthTokenPath = process.env.GOOGLE_OAUTH_TOKEN_PATH
     ? resolveTokenPath(process.env.GOOGLE_OAUTH_TOKEN_PATH)
     : undefined;
+  
+  console.log(`   GOOGLE_OAUTH_TOKEN_PATH (resolved): ${oauthTokenPath || 'NOT SET'}`);
+  
   const redirectUri =
     process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://localhost:3001";
 

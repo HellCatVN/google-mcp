@@ -9,40 +9,21 @@
  */
 
 const path = require("path");
-const fs = require("fs");
 
 // Get the project root (where this config file is located)
 const projectRoot = __dirname;
-
-// Try to find tsx in node_modules/.bin (works with npm/yarn/pnpm)
-const tsxPath = path.join(projectRoot, "node_modules", ".bin", "tsx");
-
-// Determine the best way to run tsx
-let scriptToUse;
-let argsToUse;
-
-if (fs.existsSync(tsxPath)) {
-  // Use direct path to tsx (most reliable)
-  scriptToUse = tsxPath;
-  argsToUse = ["index.ts"];
-} else {
-  // Fallback: use pnpm exec or npx
-  scriptToUse = "pnpm";
-  argsToUse = ["exec", "tsx", "index.ts"];
-  // Alternative fallback (uncomment if pnpm doesn't work):
-  // scriptToUse = "npx";
-  // argsToUse = ["tsx", "index.ts"];
-}
 
 module.exports = {
   apps: [
     {
       name: "google-mcp",
-      script: scriptToUse,
-      args: argsToUse,
+      // Use pnpm dev which runs "tsx index.ts" - this is the cleanest approach
+      // pnpm handles finding and executing tsx correctly
+      script: "pnpm",
+      args: ["dev"],
       
       cwd: projectRoot, // Use project root from config file location
-      interpreter: "node",
+      // PM2 will auto-detect the interpreter (pnpm is a shell script)
       env: {
         NODE_ENV: "development",
       },
