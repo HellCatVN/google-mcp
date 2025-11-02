@@ -1,13 +1,48 @@
 import { google } from "googleapis";
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
+import { fileURLToPath } from "url";
+import { dirname } from "path";
 import type { Credentials } from "google-auth-library";
-import { startOAuthServer } from "./oauth-server";
+import { startOAuthServer } from "./oauth-server.js";
 import open from "open";
 
+// Get the project root directory (where index.ts is located)
+// This ensures we can resolve relative paths correctly even when PM2 changes cwd
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// Go up from utils/ to project root
+const projectRoot = path.resolve(__dirname, "..");
+
+/**
+ * Resolves a token path to an absolute path
+ * Handles:
+ * - ~ (home directory expansion)
+ * - Relative paths (resolved from project root)
+ * - Absolute paths (returned as-is)
+ */
+function resolveTokenPath(tokenPath: string): string {
+  // Expand ~ to home directory
+  if (tokenPath.startsWith("~/") || tokenPath === "~") {
+    const homeDir = os.homedir();
+    tokenPath = tokenPath.replace("~", homeDir);
+  }
+  
+  // If it's already absolute, normalize and return
+  if (path.isAbsolute(tokenPath)) {
+    return path.normalize(tokenPath);
+  }
+  
+  // If it's relative, resolve from project root
+  // This ensures it works even when PM2 changes the working directory
+  return path.resolve(projectRoot, tokenPath);
+}
+
 function saveTokensToFile(tokens: Credentials, tokenPath: string): void {
-  // Normalize the path to ensure proper handling on all platforms
-  const normalizedPath = path.normalize(tokenPath);
+  // Resolve the path to absolute path
+  const resolvedPath = resolveTokenPath(tokenPath);
+  const normalizedPath = path.normalize(resolvedPath);
 
   // Ensure the directory exists
   const dirname = path.dirname(normalizedPath);
@@ -20,12 +55,14 @@ function saveTokensToFile(tokens: Credentials, tokenPath: string): void {
 
 function loadTokensFromFile(tokenPath: string): Credentials {
   try {
-    // Normalize the path
-    const normalizedPath = path.normalize(tokenPath);
+    // Resolve the path to absolute path
+    const resolvedPath = resolveTokenPath(tokenPath);
+    const normalizedPath = path.normalize(resolvedPath);
     return JSON.parse(fs.readFileSync(normalizedPath, "utf8"));
   } catch (err) {
+    const resolvedPath = resolveTokenPath(tokenPath);
     throw new Error(
-      `Error loading token file: ${
+      `Error loading token file from ${resolvedPath}: ${
         err instanceof Error ? err.message : String(err)
       }`
     );
@@ -36,7 +73,7 @@ export async function createAuthClient(): Promise<any> {
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   const oauthTokenPath = process.env.GOOGLE_OAUTH_TOKEN_PATH
-    ? path.normalize(process.env.GOOGLE_OAUTH_TOKEN_PATH)
+    ? resolveTokenPath(process.env.GOOGLE_OAUTH_TOKEN_PATH)
     : undefined;
   const redirectUri =
     process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://localhost:3001";
@@ -251,7 +288,7 @@ export async function refreshTokens(): Promise<string> {
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   const oauthTokenPath = process.env.GOOGLE_OAUTH_TOKEN_PATH
-    ? path.normalize(process.env.GOOGLE_OAUTH_TOKEN_PATH)
+    ? resolveTokenPath(process.env.GOOGLE_OAUTH_TOKEN_PATH)
     : undefined;
   const redirectUri =
     process.env.GOOGLE_OAUTH_REDIRECT_URI || "http://localhost:3001";
@@ -307,7 +344,7 @@ export async function refreshTokens(): Promise<string> {
 
 export async function reauthenticate(): Promise<string> {
   const oauthTokenPath = process.env.GOOGLE_OAUTH_TOKEN_PATH
-    ? path.normalize(process.env.GOOGLE_OAUTH_TOKEN_PATH)
+    ? resolveTokenPath(process.env.GOOGLE_OAUTH_TOKEN_PATH)
     : undefined;
 
   if (!oauthTokenPath) {
