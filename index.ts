@@ -9,6 +9,14 @@ import { existsSync } from "fs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// CRITICAL: Check if we're being spawned by bridge BEFORE loading .env file
+// When bridge spawns us, stdin is piped AND MCP_ENDPOINT is removed from environment
+// We need to detect this BEFORE loading .env, otherwise .env will set MCP_ENDPOINT again
+// and cause infinite recursion
+const isPiped = !process.stdin.isTTY;
+const hasMcpEndpointBeforeEnv = !!(process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
+const isSpawnedByBridge = isPiped && !hasMcpEndpointBeforeEnv;
+
 // Load .env file from project root using absolute path
 // This ensures it works even when PM2 runs from a different working directory
 const envPath = join(__dirname, ".env");
@@ -17,38 +25,51 @@ console.log(`   Project root: ${__dirname}`);
 console.log(`   Current working directory: ${process.cwd()}`);
 console.log(`   .env file path: ${envPath}`);
 console.log(`   .env file exists: ${existsSync(envPath)}`);
-const result = dotenv.config({ path: envPath });
-if (result.error) {
-  console.log(`   ⚠️  Error loading .env: ${result.error.message}`);
+
+// If we're spawned by bridge, don't load MCP_ENDPOINT from .env to prevent recursion
+let envResult;
+if (isSpawnedByBridge) {
+  // Load .env but exclude MCP_ENDPOINT to prevent recursion
+  envResult = dotenv.config({ path: envPath });
+  if (envResult.parsed) {
+    delete envResult.parsed.MCP_ENDPOINT;
+    delete envResult.parsed.MCP_ENDPOINTS;
+  }
+  if (envResult.error) {
+    console.log(`   ⚠️  Error loading .env: ${envResult.error.message}`);
+  } else {
+    console.log(`   ✓ .env file loaded successfully (MCP_ENDPOINT excluded to prevent recursion)`);
+    console.log(`   Loaded ${Object.keys(envResult.parsed || {}).length} environment variables`);
+  }
 } else {
-  console.log(`   ✓ .env file loaded successfully`);
-  console.log(`   Loaded ${Object.keys(result.parsed || {}).length} environment variables`);
+  envResult = dotenv.config({ path: envPath });
+  if (envResult.error) {
+    console.log(`   ⚠️  Error loading .env: ${envResult.error.message}`);
+  } else {
+    console.log(`   ✓ .env file loaded successfully`);
+    console.log(`   Loaded ${Object.keys(envResult.parsed || {}).length} environment variables`);
+  }
 }
 
-// CRITICAL: Check if we're being spawned by bridge (piped stdin) BEFORE checking MCP_ENDPOINT
-// When bridge spawns us, stdin is piped, so we should run in stdio mode, not bridge mode
-// This prevents infinite recursion even if .env file has MCP_ENDPOINT
-// However, PM2 also pipes stdin, so we need a better way to detect if we're spawned by bridge
-// Bridge.ts explicitly removes MCP_ENDPOINT from child environment, so if it's set, we're NOT spawned by bridge
-const isPiped = !process.stdin.isTTY;
+// Now check MCP_ENDPOINT after loading .env (if we weren't spawned by bridge)
 const hasMcpEndpoint = !!(process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
 
 // Debug logging for mode detection
 console.log("🔍 Mode detection:");
 console.log(`   stdin.isTTY: ${process.stdin.isTTY}`);
 console.log(`   isPiped: ${isPiped}`);
-console.log(`   MCP_ENDPOINT from env: ${process.env.MCP_ENDPOINT ? process.env.MCP_ENDPOINT.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
-console.log(`   MCP_ENDPOINTS from env: ${process.env.MCP_ENDPOINTS ? process.env.MCP_ENDPOINTS.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
+console.log(`   MCP_ENDPOINT before .env: ${hasMcpEndpointBeforeEnv ? 'SET' : 'NOT SET'}`);
+console.log(`   Spawned by bridge: ${isSpawnedByBridge}`);
+console.log(`   MCP_ENDPOINT from env (after .env): ${process.env.MCP_ENDPOINT ? process.env.MCP_ENDPOINT.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
+console.log(`   MCP_ENDPOINTS from env (after .env): ${process.env.MCP_ENDPOINTS ? process.env.MCP_ENDPOINTS.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
 
 // Auto-detect mode:
-// - If MCP_ENDPOINT is set, we should run in bridge mode (regardless of isPiped)
-//   Reason: bridge.ts removes MCP_ENDPOINT from child processes, so if it's still set,
-//   we're NOT spawned by bridge (even if PM2 pipes stdin)
-// - If MCP_ENDPOINT is NOT set but we're piped, we're likely spawned by bridge, run stdio mode
-// - If MCP_ENDPOINT is NOT set and NOT piped, run HTTP server mode
-const MCP_ENDPOINT = hasMcpEndpoint ? (process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]) : undefined;
+// - If spawned by bridge: run stdio mode (MCP_ENDPOINT was explicitly removed)
+// - If MCP_ENDPOINT is set (and NOT spawned by bridge): run bridge mode
+// - Otherwise: run HTTP server mode
+const MCP_ENDPOINT = isSpawnedByBridge ? undefined : (process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
 console.log(`   MCP_ENDPOINT (resolved): ${MCP_ENDPOINT ? MCP_ENDPOINT.replace(/token=[^&]+/, "token=***") : 'undefined'}`);
-console.log(`   Will run in: ${MCP_ENDPOINT ? 'BRIDGE MODE' : isPiped ? 'STDIO MODE (spawned by bridge)' : 'HTTP SERVER MODE'}`);
+console.log(`   Will run in: ${isSpawnedByBridge ? 'STDIO MODE (spawned by bridge)' : MCP_ENDPOINT ? 'BRIDGE MODE' : 'HTTP SERVER MODE'}`);
 
 async function main() {
   if (MCP_ENDPOINT) {
