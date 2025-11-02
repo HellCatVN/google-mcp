@@ -30,10 +30,18 @@ if (result.error) {
 // This prevents infinite recursion even if .env file has MCP_ENDPOINT
 const isPiped = !process.stdin.isTTY;
 
+// Debug logging for mode detection
+console.log("🔍 Mode detection:");
+console.log(`   stdin.isTTY: ${process.stdin.isTTY}`);
+console.log(`   isPiped: ${isPiped}`);
+console.log(`   MCP_ENDPOINT from env: ${process.env.MCP_ENDPOINT ? process.env.MCP_ENDPOINT.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
+console.log(`   MCP_ENDPOINTS from env: ${process.env.MCP_ENDPOINTS ? process.env.MCP_ENDPOINTS.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
+
 // Auto-detect mode: only check MCP_ENDPOINT if we're NOT piped (not spawned by bridge)
 // If piped, we MUST run in stdio mode to avoid recursion
 // Also check if MCP_ENDPOINT was explicitly removed (bridge sets it to undefined)
 const MCP_ENDPOINT = isPiped ? undefined : (process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
+console.log(`   MCP_ENDPOINT (resolved): ${MCP_ENDPOINT ? MCP_ENDPOINT.replace(/token=[^&]+/, "token=***") : 'undefined'}`);
 
 async function main() {
   if (MCP_ENDPOINT && !isPiped) {
