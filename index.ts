@@ -13,9 +13,21 @@ const __dirname = dirname(__filename);
 // When bridge spawns us, stdin is piped AND MCP_ENDPOINT is removed from environment
 // We need to detect this BEFORE loading .env, otherwise .env will set MCP_ENDPOINT again
 // and cause infinite recursion
+//
+// However, PM2 also pipes stdin, so we need to distinguish:
+// - PM2: piped stdin, but PM2 sets PM2_HOME or other PM2 env vars (should load MCP_ENDPOINT from .env)
+// - Bridge child: piped stdin, MCP_ENDPOINT explicitly removed, no PM2 env vars (should exclude MCP_ENDPOINT)
 const isPiped = !process.stdin.isTTY;
 const hasMcpEndpointBeforeEnv = !!(process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
-const isSpawnedByBridge = isPiped && !hasMcpEndpointBeforeEnv;
+
+// Check if we're running under PM2 (PM2 sets various environment variables)
+const isPm2 = !!(process.env.PM2_HOME || process.env.pm_id !== undefined || process.env.name !== undefined);
+
+// We're spawned by bridge if:
+// - stdin is piped (not a TTY)
+// - MCP_ENDPOINT is not in environment (bridge removed it)
+// - NOT running under PM2 (PM2 also pipes stdin but should load MCP_ENDPOINT from .env)
+const isSpawnedByBridge = isPiped && !hasMcpEndpointBeforeEnv && !isPm2;
 
 // Load .env file from project root using absolute path
 // This ensures it works even when PM2 runs from a different working directory
@@ -30,7 +42,13 @@ console.log(`   .env file exists: ${existsSync(envPath)}`);
 let envResult;
 if (isSpawnedByBridge) {
   // Load .env but exclude MCP_ENDPOINT to prevent recursion
+  // We need to manually remove it from process.env after loading because dotenv.config()
+  // modifies process.env directly
   envResult = dotenv.config({ path: envPath });
+  // Explicitly remove MCP_ENDPOINT from process.env after loading .env
+  // This prevents the spawned child from detecting MCP_ENDPOINT and running bridge mode again
+  delete process.env.MCP_ENDPOINT;
+  delete process.env.MCP_ENDPOINTS;
   if (envResult.parsed) {
     delete envResult.parsed.MCP_ENDPOINT;
     delete envResult.parsed.MCP_ENDPOINTS;
@@ -58,6 +76,8 @@ const hasMcpEndpoint = !!(process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?
 console.log("🔍 Mode detection:");
 console.log(`   stdin.isTTY: ${process.stdin.isTTY}`);
 console.log(`   isPiped: ${isPiped}`);
+console.log(`   Running under PM2: ${isPm2}`);
+console.log(`   PM2 env vars: PM2_HOME=${process.env.PM2_HOME ? 'SET' : 'NOT SET'}, pm_id=${process.env.pm_id || 'NOT SET'}, name=${process.env.name || 'NOT SET'}`);
 console.log(`   MCP_ENDPOINT before .env: ${hasMcpEndpointBeforeEnv ? 'SET' : 'NOT SET'}`);
 console.log(`   Spawned by bridge: ${isSpawnedByBridge}`);
 console.log(`   MCP_ENDPOINT from env (after .env): ${process.env.MCP_ENDPOINT ? process.env.MCP_ENDPOINT.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
