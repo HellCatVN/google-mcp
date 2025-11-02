@@ -1,0 +1,34 @@
+[Unit]
+Description=Google MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=hellcatvn
+WorkingDirectory=/home/hellcatvn/node/google-mcp
+Environment="NODE_ENV=production"
+# Load environment variables from .env file
+# systemd will read .env automatically if using EnvironmentFile directive
+EnvironmentFile=/home/hellcatvn/node/google-mcp/.env
+
+# Use pnpm to run the service
+ExecStart=/usr/bin/pnpm exec tsx index.ts
+# Or if you have tsx in node_modules:
+# ExecStart=/home/hellcatvn/node/google-mcp/node_modules/.bin/tsx index.ts
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Security (optional but recommended)
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=google-mcp
+
+[Install]
+WantedBy=multi-user.target
+

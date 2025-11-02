@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  google-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: google-mcp
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - .env
+    volumes:
+      # Mount .google-mcp directory to persist tokens
+      - ./google-mcp:/app/.google-mcp
+      # Optionally mount .env if you prefer volume over env_file
+      # - ./.env:/app/.env:ro
+    networks:
+      - google-mcp-network
+    # Health check (optional)
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  google-mcp-network:
+    driver: bridge
+
