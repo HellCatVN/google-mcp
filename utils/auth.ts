@@ -89,7 +89,22 @@ function loadTokensFromFile(tokenPath: string): Credentials {
     console.log(`   File exists: ${fs.existsSync(normalizedPath)}`);
     
     if (!fs.existsSync(normalizedPath)) {
+      const dir = path.dirname(normalizedPath);
       console.log(`   ⚠️  Token file not found at: ${normalizedPath}`);
+      console.log(`   Directory exists: ${fs.existsSync(dir)}`);
+      
+      // List directory contents if it exists
+      if (fs.existsSync(dir)) {
+        try {
+          const files = fs.readdirSync(dir);
+          console.log(`   Directory contents: ${files.length > 0 ? files.join(", ") : "(empty)"}`);
+        } catch (e) {
+          console.log(`   Could not read directory: ${e}`);
+        }
+      } else {
+        console.log(`   Directory does not exist. Will be created when tokens are saved.`);
+      }
+      
       throw new Error(`Token file not found at ${normalizedPath}`);
     }
     
