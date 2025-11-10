@@ -12,6 +12,53 @@ import { promisify } from "util";
 
 const execAsync = promisify(exec);
 
+/**
+ * Sends a Discord webhook notification
+ * @param message - The message to send
+ * @param title - Optional title for the embed
+ */
+async function sendDiscordNotification(message: string, title?: string): Promise<void> {
+  const webhookUrl = process.env.DISCORD_HOOK;
+  
+  if (!webhookUrl) {
+    // Webhook not configured, silently skip
+    return;
+  }
+
+  try {
+    const embed = {
+      title: title || "🔐 OAuth Token Expired",
+      description: message,
+      color: 0xff6b6b, // Red color
+      timestamp: new Date().toISOString(),
+      footer: {
+        text: "Google MCP Server",
+      },
+    };
+
+    const payload = {
+      embeds: [embed],
+    };
+
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      console.warn(`⚠️  Failed to send Discord notification: ${response.status} ${response.statusText}`);
+    } else {
+      console.log("   📢 Discord notification sent");
+    }
+  } catch (error) {
+    // Don't throw - webhook failures shouldn't break the OAuth flow
+    console.warn(`⚠️  Error sending Discord notification: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 // Get the project root directory (where index.ts is located)
 // This ensures we can resolve relative paths correctly even when PM2 changes cwd
 const __filename = fileURLToPath(import.meta.url);
@@ -208,6 +255,14 @@ export async function createAuthClient(): Promise<any> {
           if (refreshError?.message?.includes("invalid_grant") || 
               refreshError?.message?.includes("Token has been expired")) {
             console.warn("⚠️  Refresh token expired or invalid. Will initiate OAuth flow...");
+            
+            // Send Discord notification
+            await sendDiscordNotification(
+              "Refresh token has expired or is invalid. OAuth re-authentication flow will be initiated.\n\n" +
+              "**Action Required:** Please complete the OAuth authentication when prompted.",
+              "⚠️ OAuth Token Expired"
+            );
+            
             throw refreshError; // Re-throw to trigger OAuth flow
           }
           throw refreshError;
@@ -235,6 +290,14 @@ export async function createAuthClient(): Promise<any> {
           error?.message?.includes("invalid_grant") ||
           error?.message?.includes("Token has been expired")) {
         console.log("📋 No valid tokens found. Initiating OAuth flow...");
+        
+        // Send Discord notification
+        await sendDiscordNotification(
+          "No valid OAuth tokens found. OAuth authentication flow will be initiated.\n\n" +
+          "**Action Required:** Please complete the OAuth authentication when prompted.",
+          "🔐 OAuth Authentication Required"
+        );
+        
         try {
           await initiateOAuthFlow();
           // After flow completes, load the newly saved tokens
