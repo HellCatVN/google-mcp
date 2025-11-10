@@ -7,6 +7,10 @@ import { dirname } from "path";
 import type { Credentials } from "google-auth-library";
 import { startOAuthServer } from "./oauth-server.js";
 import open from "open";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 // Get the project root directory (where index.ts is located)
 // This ensures we can resolve relative paths correctly even when PM2 changes cwd
@@ -280,18 +284,161 @@ export async function createAuthClient(): Promise<any> {
   }
 }
 
+/**
+ * Kills Chrome processes that match the OAuth URL pattern
+ * This is a fallback cleanup method for Linux systems where the browser process
+ * might not be directly trackable from the open() call
+ */
+async function killChromeOAuthProcesses(authUrl: string): Promise<void> {
+  try {
+    // Extract a unique part of the URL to identify the process
+    const urlMatch = authUrl.match(/client_id=([^&]+)/);
+    if (!urlMatch) return;
+
+    const clientId = urlMatch[1];
+    const clientIdShort = clientId.substring(0, 15); // Use shorter substring for better matching
+    
+    // On Linux, find and kill Chrome processes with this OAuth URL
+    if (os.platform() === "linux") {
+      try {
+        // Find Chrome processes with the OAuth URL - escape special characters
+        const escapedClientId = clientIdShort.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const { stdout } = await execAsync(
+          `ps aux | grep -i "chrome.*oauth2.*${escapedClientId}" | grep -v grep || true`
+        );
+        
+        if (stdout.trim()) {
+          // Extract PIDs and kill them
+          const lines = stdout.trim().split("\n");
+          const pids = new Set<number>();
+          
+          for (const line of lines) {
+            const parts = line.trim().split(/\s+/);
+            if (parts.length > 1) {
+              const pid = parseInt(parts[1]);
+              if (!isNaN(pid)) {
+                pids.add(pid);
+              }
+            }
+          }
+          
+          // Kill all found processes
+          for (const pid of pids) {
+            try {
+              // First try SIGTERM (graceful)
+              process.kill(pid, "SIGTERM");
+              console.log(`   🧹 Sent SIGTERM to Chrome process ${pid}`);
+              
+              // Wait a bit, then force kill if still running
+              setTimeout(async () => {
+                try {
+                  // Check if process still exists
+                  await execAsync(`kill -0 ${pid} 2>/dev/null || true`);
+                  // If we get here, process still exists, force kill
+                  process.kill(pid, "SIGKILL");
+                  console.log(`   🧹 Force killed Chrome process ${pid}`);
+                } catch (e) {
+                  // Process already dead, good
+                }
+              }, 2000);
+            } catch (e) {
+              // Process might already be dead, ignore
+            }
+          }
+        }
+        
+        // Also try to kill Chrome processes by finding the main process
+        // that opened the OAuth URL (more aggressive cleanup)
+        try {
+          const { stdout: chromeMain } = await execAsync(
+            `pgrep -f "chrome.*oauth2.*${escapedClientId}" || true`
+          );
+          
+          if (chromeMain.trim()) {
+            const mainPids = chromeMain.trim().split("\n").map(p => parseInt(p)).filter(p => !isNaN(p));
+            for (const pid of mainPids) {
+              try {
+                // Kill the process tree
+                await execAsync(`pkill -TERM -P ${pid} 2>/dev/null || true`);
+                process.kill(pid, "SIGTERM");
+                console.log(`   🧹 Cleaned up Chrome process tree starting from ${pid}`);
+              } catch (e) {
+                // Ignore
+              }
+            }
+          }
+        } catch (e) {
+          // Ignore errors in secondary cleanup
+        }
+      } catch (e) {
+        // Ignore errors in cleanup - it's best effort
+      }
+    }
+  } catch (e) {
+    // Ignore cleanup errors
+  }
+}
+
 export async function initiateOAuthFlow(scopes?: string[]): Promise<void> {
+  let browserProcess: any = null;
+  
   try {
     // Start the OAuth server to handle the callback
     const serverPromise = startOAuthServer();
 
     // Generate and open the consent URL
     const authUrl = generateOAuthConsentUrl(scopes);
-    await open(authUrl);
+    
+    // Open browser and track the process
+    // Use wait: false to get the child process immediately
+    browserProcess = await open(authUrl, { wait: false });
 
     // Wait for the server to complete the flow
-    await serverPromise;
+    try {
+      await serverPromise;
+    } finally {
+      // Always try to close the browser after OAuth completes (success or failure)
+      // Wait a short moment for the redirect page to load, then close
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      if (browserProcess) {
+        try {
+          // Try to kill the process if it's still running
+          if (browserProcess.pid && !browserProcess.killed) {
+            browserProcess.kill("SIGTERM");
+            console.log("   🧹 Closed browser process");
+          }
+        } catch (e) {
+          // Process might already be dead, ignore
+        }
+      }
+      
+      // Fallback: kill Chrome processes by URL pattern (for Linux)
+      // This is important because on Linux, open() might not return a trackable process
+      await killChromeOAuthProcesses(authUrl);
+    }
   } catch (error) {
+    // Ensure browser is closed even on error
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    if (browserProcess) {
+      try {
+        if (browserProcess.pid && !browserProcess.killed) {
+          browserProcess.kill("SIGTERM");
+        }
+      } catch (e) {
+        // Ignore
+      }
+    }
+    
+    // Cleanup on error too
+    try {
+      const authUrl = generateOAuthConsentUrl(scopes);
+      await killChromeOAuthProcesses(authUrl);
+    } catch (e) {
+      // Ignore cleanup errors
+    }
+    
     throw error;
   }
 }
