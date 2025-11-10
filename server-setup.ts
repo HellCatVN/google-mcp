@@ -16,6 +16,7 @@ import * as gmailHandlers from "./handlers/gmail";
 import * as driveHandlers from "./handlers/drive";
 import * as tasksHandlers from "./handlers/tasks";
 import * as oauthHandlers from "./handlers/oauth";
+import { refreshTokens } from "./utils/auth";
 
 export function createGoogleMcpServer() {
   // Service instances
@@ -299,6 +300,58 @@ export function createGoogleMcpServer() {
       googleDriveInstance = new GoogleDrive(authClient);
       googleTasksInstance = new GoogleTasks(authClient);
       console.log("✅ Google services initialized successfully");
+
+      // Start proactive token refresh scheduler
+      const minutes =
+        parseInt(process.env.REFRESH_INTERVAL_MINUTES || "", 10) || 720; // default 12h
+      const intervalMs = Math.max(15, minutes) * 60 * 1000; // minimum 15 minutes
+      console.log(
+        `🔁 Proactive token refresh scheduler started (every ${Math.round(
+          intervalMs / 60000
+        )} minutes)`
+      );
+
+      const sendDiscord = async (message: string, title?: string) => {
+        const webhook = process.env.DISCORD_HOOK;
+        if (!webhook) return;
+        try {
+          await fetch(webhook, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              embeds: [
+                {
+                  title: title || "🔁 Token Refresh",
+                  description: message,
+                  color: 0x57ab5a,
+                  timestamp: new Date().toISOString(),
+                  footer: { text: "Google MCP Server" },
+                },
+              ],
+            }),
+          });
+        } catch {
+          // best-effort only
+        }
+      };
+
+      setInterval(async () => {
+        try {
+          const result = await refreshTokens();
+          console.log(`🔁 ${result}`);
+          // Optionally notify success once per day could be added; for now, no Discord on success
+        } catch (e) {
+          const msg =
+            e instanceof Error ? e.message : typeof e === "string" ? e : "Unknown error";
+          console.warn(`⚠️  Scheduled token refresh failed: ${msg}`);
+          // Notify via Discord if configured
+          await sendDiscord(
+            `Scheduled token refresh failed.\n\nError: ${msg}\n\n` +
+              "If this persists, re-authentication may be required.",
+            "⚠️ Scheduled Token Refresh Failed"
+          );
+        }
+      }, intervalMs);
     })
     .catch((error) => {
       console.error("\n❌ Authentication Error:");

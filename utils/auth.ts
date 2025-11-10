@@ -75,6 +75,18 @@ const projectRoot = path.resolve(__dirname, "..");
  * - Special case: paths starting with "/" that are meant to be relative (like "/.google-mcp/tokens.json")
  */
 function resolveTokenPath(tokenPath: string): string {
+  // Always standardize filename to token.json (single form)
+  const enforceSingleFilename = (p: string) => {
+    const dir = path.dirname(p);
+    const base = path.basename(p);
+    if (base.toLowerCase() === "tokens.json") {
+      const replaced = path.join(dir, "token.json");
+      console.log(`   ℹ️  Using single token filename. '${base}' -> 'token.json'`);
+      return replaced;
+    }
+    return p;
+  };
+
   // Expand ~ to home directory
   if (tokenPath.startsWith("~/") || tokenPath === "~") {
     const homeDir = os.homedir();
@@ -95,10 +107,10 @@ function resolveTokenPath(tokenPath: string): string {
   // If it's already absolute, normalize and return
   if (path.isAbsolute(tokenPath)) {
     // Check if the absolute path exists, if not, try treating it as relative to project root
-    const normalized = path.normalize(tokenPath);
+    const normalized = path.normalize(enforceSingleFilename(tokenPath));
     if (!fs.existsSync(normalized)) {
       // Try as relative path from project root
-      const relativeAttempt = path.resolve(projectRoot, tokenPath.substring(1)); // Remove leading /
+      const relativeAttempt = path.resolve(projectRoot, enforceSingleFilename(tokenPath).substring(1)); // Remove leading /
       if (fs.existsSync(relativeAttempt)) {
         console.log(`   ℹ️  Absolute path not found, using project-relative path instead: ${relativeAttempt}`);
         return relativeAttempt;
@@ -109,7 +121,7 @@ function resolveTokenPath(tokenPath: string): string {
   
   // If it's relative, resolve from project root
   // This ensures it works even when PM2 changes the working directory
-  return path.resolve(projectRoot, tokenPath);
+  return path.resolve(projectRoot, enforceSingleFilename(tokenPath));
 }
 
 function saveTokensToFile(tokens: Credentials, tokenPath: string): void {
@@ -121,6 +133,18 @@ function saveTokensToFile(tokens: Credentials, tokenPath: string): void {
   const dirname = path.dirname(normalizedPath);
   if (!fs.existsSync(dirname)) {
     fs.mkdirSync(dirname, { recursive: true });
+  }
+
+  // If legacy tokens.json exists at same dir and we're writing token.json, we can remove/overwrite
+  try {
+    const legacyPath = path.join(dirname, "tokens.json");
+    if (path.basename(normalizedPath) === "token.json" && fs.existsSync(legacyPath)) {
+      // Optionally archive or remove; we choose to overwrite/remove legacy to avoid confusion
+      fs.rmSync(legacyPath);
+      console.log("   ℹ️  Removed legacy tokens.json in favor of token.json");
+    }
+  } catch {
+    // ignore cleanup errors
   }
 
   fs.writeFileSync(normalizedPath, JSON.stringify(tokens));
@@ -139,50 +163,26 @@ function loadTokensFromFile(tokenPath: string): Credentials {
     console.log(`   Normalized path: ${normalizedPath}`);
     console.log(`   File exists: ${fs.existsSync(normalizedPath)}`);
     
-    let fileToLoad = normalizedPath;
-    
-    // If the exact file doesn't exist, try some common variations
+    // If the exact file doesn't exist, attempt migration from legacy tokens.json -> token.json
     if (!fs.existsSync(normalizedPath)) {
       const dir = path.dirname(normalizedPath);
-      const basename = path.basename(normalizedPath);
+      const legacy = path.join(dir, "tokens.json");
       console.log(`   ⚠️  Token file not found at: ${normalizedPath}`);
       console.log(`   Directory exists: ${fs.existsSync(dir)}`);
-      
-      // List directory contents if it exists
-      if (fs.existsSync(dir)) {
+      if (fs.existsSync(legacy) && path.basename(normalizedPath) === "token.json") {
         try {
-          const files = fs.readdirSync(dir);
-          console.log(`   Directory contents: ${files.length > 0 ? files.join(", ") : "(empty)"}`);
-          
-          // Try common variations: token.json (without 's'), tokens.json (with 's')
-          const alternateNames = [
-            basename.replace('tokens.json', 'token.json'), // tokens.json -> token.json
-            basename.replace('token.json', 'tokens.json'), // token.json -> tokens.json
-          ];
-          
-          for (const altName of alternateNames) {
-            if (altName !== basename) {
-              const altPath = path.join(dir, altName);
-              if (fs.existsSync(altPath)) {
-                console.log(`   ✓ Found alternate token file: ${altPath}`);
-                fileToLoad = altPath;
-                break;
-              }
-            }
-          }
+          fs.renameSync(legacy, normalizedPath);
+          console.log(`   ✓ Migrated legacy tokens.json to token.json`);
         } catch (e) {
-          console.log(`   Could not read directory: ${e}`);
+          console.log(`   ⚠️  Failed to migrate legacy tokens.json: ${e}`);
         }
-      } else {
-        console.log(`   Directory does not exist. Will be created when tokens are saved.`);
       }
-      
-      if (!fs.existsSync(fileToLoad)) {
-        throw new Error(`Token file not found at ${normalizedPath} (also checked common variations)`);
+      if (!fs.existsSync(normalizedPath)) {
+        throw new Error(`Token file not found at ${normalizedPath}`);
       }
     }
     
-    return JSON.parse(fs.readFileSync(fileToLoad, "utf8"));
+    return JSON.parse(fs.readFileSync(normalizedPath, "utf8"));
   } catch (err) {
     const resolvedPath = resolveTokenPath(tokenPath);
     throw new Error(
