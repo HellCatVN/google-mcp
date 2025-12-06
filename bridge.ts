@@ -14,9 +14,8 @@ import { spawn, ChildProcess } from "child_process";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { existsSync } from "fs";
+import { loadAccountsConfig } from "./utils/config.js";
 
-// Configuration from environment
-const ENDPOINT = process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0];
 const DEBUG_MODE = process.env.DEBUG === "true" || process.env.NODE_ENV === "development";
 const INITIAL_BACKOFF = 1; // 1 second
 const MAX_BACKOFF = 600; // 10 minutes (600 seconds)
@@ -24,8 +23,31 @@ const TARGET_SERVER = process.env.MCP_SERVER_NAME || "google-mcp";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Load environment variables from .env file using absolute path
-// This ensures it works even when PM2 runs from a different working directory
+// Load accounts.json configuration (MANDATORY - no fallback to .env)
+console.log("🔍 Loading accounts configuration for bridge:");
+let accountsConfig;
+let ENDPOINT: string | undefined;
+try {
+  accountsConfig = loadAccountsConfig();
+  console.log(`   ✓ Accounts config loaded (${accountsConfig.accounts.length} account(s))`);
+  
+  // Find account with mcpEndpoint (required for bridge mode)
+  const accountWithEndpoint = accountsConfig.accounts.find(a => a.mcpEndpoint);
+  if (accountWithEndpoint && accountWithEndpoint.mcpEndpoint) {
+    ENDPOINT = accountWithEndpoint.mcpEndpoint;
+    console.log(`   ✓ Using MCP_ENDPOINT from accounts.json: ${ENDPOINT.replace(/token=[^&]+/, "token=***")}`);
+  } else {
+    throw new Error("No account with mcpEndpoint found in config/accounts.json. Bridge mode requires an account with mcpEndpoint.");
+  }
+} catch (error) {
+  console.error(`   ❌ Failed to load accounts config: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`\n💡 Please create config/accounts.json with at least one account that has mcpEndpoint configured.`);
+  console.error(`   Example: { "accounts": [{ "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=...", "tokenPath": "~/.google-mcp/token.json" }] }\n`);
+  process.exit(1);
+}
+
+// Load .env file only for OAuth client credentials (CLIENT_ID, CLIENT_SECRET, etc.)
+// Endpoint is now configured via accounts.json
 const envPath = join(__dirname, ".env");
 dotenv.config({ path: envPath });
 
@@ -240,11 +262,30 @@ function spawnServerProcess(): ChildProcess {
     }
   });
   
-  // Forward stderr to console (logging)
+  // Forward stderr to console (logging and errors)
   childProc.stderr?.setEncoding("utf-8");
   childProc.stderr?.on("data", (data: string) => {
     console.error(data);
   });
+  
+  // Set up stdout handler early to capture initialization logs
+  // This will be replaced when WebSocket connects, but we need it for early logs
+  childProc.stdout?.setEncoding("utf-8");
+  let stdoutHandler: ((data: string) => void) | null = null;
+  
+  // Initial handler: log everything (for initialization phase)
+  stdoutHandler = (data: string) => {
+    const lines = data.toString().split("\n").filter((line) => line.trim());
+    for (const line of lines) {
+      // Log all lines during initialization (before WebSocket connects)
+      console.log(line);
+    }
+  };
+  
+  childProc.stdout?.on("data", stdoutHandler);
+  
+  // Store reference so we can replace it later when WebSocket connects
+  (childProc as any)._stdoutHandler = stdoutHandler;
   
   return childProc;
 }
@@ -279,8 +320,13 @@ async function connectToServer(uri: string): Promise<void> {
         return;
       }
       
-      // Set stdout encoding
-      childProcess.stdout.setEncoding("utf-8");
+      // Replace the initial stdout handler with one that filters MCP protocol messages
+      // Remove all existing stdout listeners to avoid duplicates
+      if (childProcess.stdout) {
+        childProcess.stdout.removeAllListeners("data");
+        // Set stdout encoding (if not already set)
+        childProcess.stdout.setEncoding("utf-8");
+      }
       
       // Pipe WebSocket messages → Stdio (inbound)
       ws!.on("message", (data: WebSocket.Data) => {
@@ -315,7 +361,7 @@ async function connectToServer(uri: string): Promise<void> {
           const lines = data.toString().split("\n").filter((line) => line.trim());
           
           for (const line of lines) {
-            // Only send valid JSON-RPC messages (skip console.log output and other noise)
+            // Check if it's a JSON-RPC message
             if (line.trim() && line.trim().startsWith("{") && ws && ws.readyState === WebSocket.OPEN) {
               try {
                 // Validate it's JSON before sending
@@ -326,11 +372,14 @@ async function connectToServer(uri: string): Promise<void> {
                 }
                 ws.send(line);
               } catch (parseError) {
-                // Not valid JSON, skip it (might be console.log output)
-                if (DEBUG_MODE) {
-                  log(`Skipping non-JSON line: ${line.substring(0, 100)}`);
-                }
+                // Not valid JSON - this is likely a console.log from initialization
+                // Log it so we can see authentication and initialization messages
+                console.log(line);
               }
+            } else {
+              // Not JSON - this is console.log output (initialization logs, etc.)
+              // Log it so we can see what's happening
+              console.log(line);
             }
           }
         } catch (error) {
@@ -449,16 +498,18 @@ async function connectWithRetry(uri: string): Promise<void> {
  * Main entry point
  */
 async function main() {
-  // Validate endpoint
+  // Validate endpoint (should already be set from accounts.json, but double-check)
   if (!ENDPOINT) {
-    console.error("❌ MCP_ENDPOINT environment variable is required");
-    console.error("   Example: MCP_ENDPOINT=wss://api.xiaozhi.me/mcp/?token=...");
+    console.error("❌ MCP_ENDPOINT is required");
+    console.error("   Please configure an account with mcpEndpoint in config/accounts.json");
+    console.error("   Example: { \"accounts\": [{ \"mcpEndpoint\": \"wss://api.xiaozhi.me/mcp/?token=...\", \"tokenPath\": \"~/.google-mcp/token.json\" }] }");
     process.exit(1);
   }
   
   // Validate WebSocket URL
   if (!ENDPOINT.startsWith("ws://") && !ENDPOINT.startsWith("wss://")) {
     console.error("❌ MCP_ENDPOINT must be a WebSocket URL (ws:// or wss://)");
+    console.error(`   Current value: ${ENDPOINT}`);
     process.exit(1);
   }
   

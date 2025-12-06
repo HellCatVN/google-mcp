@@ -292,7 +292,9 @@ export function createGoogleMcpServer() {
     }
   });
 
-  // Initialize authentication and services
+  // Initialize authentication and services immediately
+  // This will trigger OAuth flow if tokens don't exist
+  console.log("🔐 Initializing authentication...");
   initializationPromise = createAuthClient()
     .then((authClient) => {
       googleCalendarInstance = new GoogleCalendar(authClient);
@@ -301,16 +303,7 @@ export function createGoogleMcpServer() {
       googleTasksInstance = new GoogleTasks(authClient);
       console.log("✅ Google services initialized successfully");
 
-      // Start proactive token refresh scheduler
-      const minutes =
-        parseInt(process.env.REFRESH_INTERVAL_MINUTES || "", 10) || 720; // default 12h
-      const intervalMs = Math.max(15, minutes) * 60 * 1000; // minimum 15 minutes
-      console.log(
-        `🔁 Proactive token refresh scheduler started (every ${Math.round(
-          intervalMs / 60000
-        )} minutes)`
-      );
-
+      // Helper function for Discord notifications
       const sendDiscord = async (message: string, title?: string) => {
         const webhook = process.env.DISCORD_HOOK;
         if (!webhook) return;
@@ -335,6 +328,28 @@ export function createGoogleMcpServer() {
         }
       };
 
+      // Start proactive token refresh scheduler
+      // Google OAuth access tokens expire after ~1 hour, so we need to refresh more frequently
+      // Default: refresh every 50 minutes (before 1-hour expiration)
+      // Minimum: 15 minutes to avoid excessive API calls
+      const configuredMinutes = parseInt(process.env.REFRESH_INTERVAL_MINUTES || "", 10);
+      const defaultMinutes = 50; // Refresh every 50 minutes (before 1-hour token expiration)
+      const minutes = configuredMinutes || defaultMinutes;
+      const intervalMs = Math.max(15, minutes) * 60 * 1000; // minimum 15 minutes
+      console.log(
+        `🔁 Proactive token refresh scheduler started (every ${Math.round(
+          intervalMs / 60000
+        )} minutes)`
+      );
+      if (minutes > 55) {
+        console.warn(
+          `   ⚠️  Warning: Refresh interval (${minutes} min) is longer than token expiration (~60 min).`
+        );
+        console.warn(
+          `   Consider setting REFRESH_INTERVAL_MINUTES to 50 or less to prevent token expiration.`
+        );
+      }
+
       setInterval(async () => {
         try {
           const result = await refreshTokens();
@@ -354,18 +369,30 @@ export function createGoogleMcpServer() {
       }, intervalMs);
     })
     .catch((error) => {
-      console.error("\n❌ Authentication Error:");
-      console.error(error.message);
-      if (error.message.includes("placeholder") || error.message.includes("invalid_client")) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error("\n❌ Authentication initialization failed:");
+      console.error(`   ${errorMsg}`);
+      
+      // Check if it's a token file missing error (should trigger OAuth flow)
+      if (errorMsg.includes("Error loading token file") || 
+          errorMsg.includes("Token file not found") ||
+          errorMsg.includes("ENOENT")) {
+        console.error("\n💡 OAuth authentication flow should be triggered automatically.");
+        console.error("   If you don't see a browser window, the OAuth flow may have failed.");
+        console.error("   You can manually trigger re-authentication using the google_oauth_reauthenticate tool.\n");
+      } else if (errorMsg.includes("placeholder") || errorMsg.includes("invalid_client")) {
         console.error("\n💡 To fix this:");
         console.error("   1. Go to https://console.cloud.google.com/apis/credentials");
         console.error("   2. Create OAuth 2.0 credentials (Desktop app type)");
         console.error("   3. Update your .env file with:");
         console.error("      GOOGLE_OAUTH_CLIENT_ID=<your-actual-client-id>");
         console.error("      GOOGLE_OAUTH_CLIENT_SECRET=<your-actual-client-secret>");
-        console.error("      GOOGLE_OAUTH_TOKEN_PATH=~/.google-mcp/tokens.json");
         console.error("\n⚠️  The server will continue running, but tools will fail until authentication is configured.\n");
+      } else {
+        console.error("\n💡 This error will be shown again when a tool is called.");
+        console.error("   If OAuth flow is needed, it will be triggered automatically.\n");
       }
+      // Re-throw so it can be caught when tools are called
       throw error;
     });
 

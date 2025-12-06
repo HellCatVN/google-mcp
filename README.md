@@ -26,12 +26,11 @@ Click below for one-click install with `.mcpb`:
       "command": "pnpm",
       "args": ["--global", "exec", "google-mcp@latest"],
       "env": {
-        // Either can be used, but not both
-        // Use OAuth
+        // OAuth credentials (still required in .env or here)
         "GOOGLE_OAUTH_CLIENT_ID": "<YOUR_CLIENT_ID>",
         "GOOGLE_OAUTH_CLIENT_SECRET": "<YOUR_CLIENT_SECRET>",
-        "GOOGLE_OAUTH_TOKEN_PATH": "<PATH_TO_STORE_TOKENS> CAN_BE_ANYWHERE_ON_YOUR_SYSTEM",
-        // Use Service Account
+        // Token paths and endpoints are now configured in config/accounts.json
+        // Use Service Account (alternative to OAuth)
         "GOOGLE_CLIENT_EMAIL": "<YOUR_SERVICE_ACCOUNT_EMAIL>",
         "GOOGLE_PRIVATE_KEY": "<YOUR_SERVICE_ACCOUNT_PRIVATE_KEY>",
         "GMAIL_USER_TO_IMPERSONATE": "<USER_TO_IMPERSONATE>"
@@ -41,9 +40,31 @@ Click below for one-click install with `.mcpb`:
 }
 ```
 
+**Note**: Token paths and MCP endpoints are now configured in `config/accounts.json` instead of environment variables. See [Configuration](#configuration) section below.
+
 </details>
 
-## What's New in v1.1.0
+## What's New
+
+### 🆕 v1.2.0 - Accounts Configuration
+
+- **New `config/accounts.json` Configuration**: 
+  - Token paths and MCP endpoints are now configured via `config/accounts.json`
+  - No longer need `GOOGLE_OAUTH_TOKEN_PATH` or `MCP_ENDPOINT` in `.env`
+  - Support for multiple accounts with shared token paths
+  - Automatic mode detection (bridge mode vs HTTP server mode)
+
+- **Improved Token Refresh**:
+  - Default refresh interval changed from 720 minutes to 50 minutes (before 1-hour token expiration)
+  - Smart refresh: only refreshes when token expires within 10 minutes
+  - Automatic token refresh scheduler with configurable interval
+
+- **Better Error Handling**:
+  - Automatic OAuth flow when token file is missing
+  - Improved error messages and logging
+  - Port conflict resolution for OAuth server
+
+### v1.1.0
 
 ### 🆕 Major Features
 
@@ -190,32 +211,85 @@ You'll only need to click "Allow" in the browser - everything else is automated!
    - If using test mode, add your email to the test users list.
    - Make sure to enable API access for desired services (Gmail, Calendar, Drive etc.).
 
-3. Configure Your Client: Edit your claude_desktop_config.json (or equivalent config file for your client):
+3. Configure Environment Variables:
 
-```json
-{
-  "mcpServers": {
-    "google-mcp": {
-      "command": "pnpm",
-      "args": ["--global", "exec", "google-mcp@latest"],
-      "env": {
-        // Either can be used, but not both
-        // Use OAuth
-        "GOOGLE_OAUTH_CLIENT_ID": "<YOUR_CLIENT_ID>",
-        "GOOGLE_OAUTH_CLIENT_SECRET": "<YOUR_CLIENT_SECRET>",
-        "GOOGLE_OAUTH_TOKEN_PATH": "<PATH_TO_STORE_TOKENS>",
-        // Use Service Account
-        "GOOGLE_CLIENT_EMAIL": "<YOUR_SERVICE_ACCOUNT_EMAIL>",
-        "GOOGLE_PRIVATE_KEY": "<YOUR_SERVICE_ACCOUNT_PRIVATE_KEY>",
-        "GMAIL_USER_TO_IMPERSONATE": "<USER_TO_IMPERSONATE>"
-      }
-    }
-  }
-}
-```
+   Create a `.env` file in the project root with your OAuth credentials:
 
-4. Authenticate:
-   - The first time you run the server, it will open a browser for OAuth authentication. Follow the prompts to grant access, and tokens will be saved to GOOGLE_OAUTH_TOKEN_PATH.
+   ```env
+   GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+   GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+   ```
+
+   **Note**: Token paths and MCP endpoints are no longer configured in `.env`. They are now managed via `config/accounts.json` (see step 4).
+
+4. Configure Accounts:
+
+   Create `config/accounts.json` with your account configuration:
+
+   ```json
+   {
+     "accounts": [
+       {
+         "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=your-token",
+         "tokenPath": "~/.google-mcp/tokens-user1.json",
+         "http": true
+       }
+     ]
+   }
+   ```
+
+   **Account Configuration Options:**
+   - `mcpEndpoint` (optional): WebSocket endpoint for bridge mode. If set, the server runs in bridge mode.
+   - `tokenPath` (required): Path to store OAuth tokens. Supports `~` for home directory.
+   - `http` (optional): Set to `true` for exactly one account if you want HTTP server mode (when no `mcpEndpoint` is set).
+
+   **Examples:**
+   
+   **Bridge Mode** (connecting to external endpoint):
+   ```json
+   {
+     "accounts": [
+       {
+         "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=your-token",
+         "tokenPath": "~/.google-mcp/token.json"
+       }
+     ]
+   }
+   ```
+
+   **HTTP Server Mode**:
+   ```json
+   {
+     "accounts": [
+       {
+         "tokenPath": "~/.google-mcp/token.json",
+         "http": true
+       }
+     ]
+   }
+   ```
+
+   **Multiple Accounts** (same token path, different endpoints):
+   ```json
+   {
+     "accounts": [
+       {
+         "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=token1",
+         "tokenPath": "~/.google-mcp/tokens-user1.json",
+         "http": true
+       },
+       {
+         "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=token2",
+         "tokenPath": "~/.google-mcp/tokens-user1.json"
+       }
+     ]
+   }
+   ```
+
+5. Authenticate:
+   - The first time you run the server, it will open a browser for OAuth authentication if the token file doesn't exist.
+   - Follow the prompts to grant access, and tokens will be saved to the `tokenPath` specified in `accounts.json`.
+   - The OAuth flow will automatically trigger when needed.
 
 ## Usage
 
@@ -241,27 +315,109 @@ Refresh my Google OAuth tokens
 Re-authenticate my Google account
 ```
 
+## Configuration
+
+### Accounts Configuration (`config/accounts.json`)
+
+The server uses `config/accounts.json` to manage multiple accounts, token paths, and endpoints. This replaces the need for `GOOGLE_OAUTH_TOKEN_PATH` and `MCP_ENDPOINT` environment variables.
+
+**File Location**: `config/accounts.json` (or set `GOOGLE_ACCOUNTS_CONFIG` to a custom path)
+
+**Structure**:
+```json
+{
+  "accounts": [
+    {
+      "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=your-token",
+      "tokenPath": "~/.google-mcp/token.json",
+      "http": true
+    }
+  ]
+}
+```
+
+**Fields**:
+- `mcpEndpoint` (optional): WebSocket endpoint URL for bridge mode. If provided, the server runs in bridge mode.
+- `tokenPath` (required): Path to store OAuth tokens. Supports:
+  - `~` for home directory (e.g., `~/.google-mcp/token.json`)
+  - Relative paths (resolved from project root)
+  - Absolute paths
+- `http` (optional): Set to `true` for exactly one account to enable HTTP server mode when no `mcpEndpoint` is set.
+
+**Multiple Accounts**:
+You can configure multiple accounts with different endpoints but share the same token path:
+```json
+{
+  "accounts": [
+    {
+      "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=token1",
+      "tokenPath": "~/.google-mcp/tokens-user1.json",
+      "http": true
+    },
+    {
+      "mcpEndpoint": "wss://api.xiaozhi.me/mcp/?token=token2",
+      "tokenPath": "~/.google-mcp/tokens-user1.json"
+    }
+  ]
+}
+```
+
+### Environment Variables (`.env`)
+
+Only OAuth credentials are required in `.env`:
+
+```env
+# Required: OAuth credentials
+GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret
+
+# Optional: OAuth redirect URI (defaults to http://localhost:3001)
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:3001
+
+# Optional: Custom accounts config path (defaults to config/accounts.json)
+GOOGLE_ACCOUNTS_CONFIG=config/accounts.json
+
+# Optional: Token refresh interval in minutes (default: 50, minimum: 15)
+REFRESH_INTERVAL_MINUTES=50
+
+# Optional: Discord webhook for notifications
+DISCORD_HOOK=https://discord.com/api/webhooks/your-webhook-url
+
+# Optional: Server port for HTTP mode (default: 3000)
+PORT=3000
+```
+
+**Note**: `GOOGLE_OAUTH_TOKEN_PATH` and `MCP_ENDPOINT` are no longer used. Configure these in `config/accounts.json` instead.
+
 ## Transport Support
 
-This MCP server supports both stdio and HTTP transports via environment variables:
+This MCP server supports multiple transport modes based on configuration:
 
-### Stdio Transport (Default)
+### Bridge Mode (WebSocket Client)
+
+When an account with `mcpEndpoint` is configured in `accounts.json`, the server runs in bridge mode:
 
 ```bash
-# Default mode - uses stdio transport
+# Bridge mode is automatically detected from accounts.json
+pnpm run bridge
+```
+
+The bridge connects to the WebSocket endpoint and spawns the MCP server in stdio mode.
+
+### HTTP Server Mode
+
+When an account with `http: true` is configured (and no `mcpEndpoint`), the server runs in HTTP mode:
+
+```bash
+# HTTP server mode
 pnpm run dev
-# Or explicitly
-MCP_TRANSPORT=stdio pnpm exec tsx index.ts
-```
-
-### HTTP Transport (Streamable HTTP)
-
-```bash
-# HTTP mode with Streamable HTTP support
-MCP_TRANSPORT=http pnpm exec tsx index.ts
 # Or with custom port
-MCP_TRANSPORT=http PORT=3000 pnpm exec tsx index.ts
+PORT=3000 pnpm run dev
 ```
+
+### Stdio Mode (Default for MCP Clients)
+
+When spawned by bridge or used with MCP clients, the server automatically runs in stdio mode.
 
 When running in HTTP mode, the server provides these endpoints:
 
@@ -300,11 +456,22 @@ git clone https://github.com/vakharwalad23/google-mcp.git
 cd google-mcp
 pnpm install
 
-# Run in stdio mode (default)
+# 1. Create .env file with OAuth credentials
+cp template.env .env
+# Edit .env and add your GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET
+
+# 2. Create accounts.json configuration
+cp config/accounts.example.json config/accounts.json
+# Edit config/accounts.json with your token path and endpoint (if using bridge mode)
+
+# 3. Run the server
+# HTTP server mode (if account has http: true)
 pnpm run dev
 
-# Run in HTTP mode
-MCP_TRANSPORT=http pnpm run dev
+# Bridge mode (if account has mcpEndpoint)
+pnpm run bridge
+
+# The server will automatically detect the mode from accounts.json
 ```
 
 Thank you for using Google MCP Tools! If you have any questions or suggestions, feel free to open an issue or contribute to the project.

@@ -125,29 +125,40 @@ function resolveTokenPath(tokenPath: string): string {
 }
 
 function saveTokensToFile(tokens: Credentials, tokenPath: string): void {
-  // Resolve the path to absolute path
-  const resolvedPath = resolveTokenPath(tokenPath);
-  const normalizedPath = path.normalize(resolvedPath);
-
-  // Ensure the directory exists
-  const dirname = path.dirname(normalizedPath);
-  if (!fs.existsSync(dirname)) {
-    fs.mkdirSync(dirname, { recursive: true });
-  }
-
-  // If legacy tokens.json exists at same dir and we're writing token.json, we can remove/overwrite
   try {
-    const legacyPath = path.join(dirname, "tokens.json");
-    if (path.basename(normalizedPath) === "token.json" && fs.existsSync(legacyPath)) {
-      // Optionally archive or remove; we choose to overwrite/remove legacy to avoid confusion
-      fs.rmSync(legacyPath);
-      console.log("   ℹ️  Removed legacy tokens.json in favor of token.json");
-    }
-  } catch {
-    // ignore cleanup errors
-  }
+    // Resolve the path to absolute path
+    const resolvedPath = resolveTokenPath(tokenPath);
+    const normalizedPath = path.normalize(resolvedPath);
 
-  fs.writeFileSync(normalizedPath, JSON.stringify(tokens));
+    console.log(`   📝 Saving tokens to: ${normalizedPath}`);
+
+    // Ensure the directory exists
+    const dirname = path.dirname(normalizedPath);
+    if (!fs.existsSync(dirname)) {
+      console.log(`   📁 Creating directory: ${dirname}`);
+      fs.mkdirSync(dirname, { recursive: true });
+    }
+
+    // If legacy tokens.json exists at same dir and we're writing token.json, we can remove/overwrite
+    try {
+      const legacyPath = path.join(dirname, "tokens.json");
+      if (path.basename(normalizedPath) === "token.json" && fs.existsSync(legacyPath)) {
+        // Optionally archive or remove; we choose to overwrite/remove legacy to avoid confusion
+        fs.rmSync(legacyPath);
+        console.log("   ℹ️  Removed legacy tokens.json in favor of token.json");
+      }
+    } catch {
+      // ignore cleanup errors
+    }
+
+    // Write tokens to file (this will create or overwrite)
+    fs.writeFileSync(normalizedPath, JSON.stringify(tokens, null, 2));
+    console.log(`   ✓ Tokens saved successfully to: ${normalizedPath}`);
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error(`   ❌ Failed to save tokens to ${tokenPath}: ${errorMsg}`);
+    throw new Error(`Failed to save tokens to ${tokenPath}: ${errorMsg}`);
+  }
 }
 
 function loadTokensFromFile(tokenPath: string): Credentials {
@@ -178,7 +189,7 @@ function loadTokensFromFile(tokenPath: string): Credentials {
         }
       }
       if (!fs.existsSync(normalizedPath)) {
-        throw new Error(`Token file not found at ${normalizedPath}`);
+        throw new Error(`Error loading token file from ${normalizedPath}: Token file not found`);
       }
     }
     
@@ -238,34 +249,100 @@ export async function createAuthClient(): Promise<any> {
       const tokens = loadTokensFromFile(oauthTokenPath);
       oAuth2Client.setCredentials(tokens);
       
-      // Test the credentials by trying to refresh (if we have a refresh token)
+      // Set up automatic token refresh listener to save refreshed tokens to file
+      // The Google OAuth2 client automatically refreshes tokens when making API calls
+      oAuth2Client.on("tokens", (newTokens: Credentials) => {
+        if (newTokens.access_token || newTokens.refresh_token) {
+          // Merge with existing tokens to preserve refresh_token if not returned
+          const currentTokens =
+            (oAuth2Client.credentials as Credentials | null | undefined) || {};
+          const updatedTokens: Credentials = {
+            ...currentTokens,
+            ...newTokens,
+            // Preserve refresh_token if new tokens don't include it
+            refresh_token:
+              newTokens.refresh_token ||
+              currentTokens.refresh_token ||
+              tokens.refresh_token,
+          };
+          
+          // Save updated tokens to file
+          try {
+            saveTokensToFile(updatedTokens, oauthTokenPath);
+            console.log("   ✓ Tokens automatically refreshed and saved");
+          } catch (saveError) {
+            console.warn(`   ⚠️  Failed to save refreshed tokens: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
+          }
+        }
+      });
+      
+      // Only refresh access token if it's expired or about to expire (within 5 minutes)
+      // The Google OAuth2 client will automatically refresh tokens when making API calls,
+      // so we don't need to proactively refresh unless the token is already expired
       if (tokens.refresh_token) {
-        try {
-          await oAuth2Client.refreshAccessToken();
-        } catch (refreshError: any) {
-          if (refreshError?.response?.data?.error === "invalid_client" || 
-              refreshError?.code === 401) {
-            throw new Error(
-              `Invalid OAuth credentials. The client ID or client secret in your .env file is incorrect.\n` +
-              `Please verify your credentials at https://console.cloud.google.com/apis/credentials\n` +
-              `Error: ${refreshError.message || "invalid_client"}`
-            );
-          }
-          // If it's just a missing/invalid refresh token, we'll initiate OAuth flow
-          if (refreshError?.message?.includes("invalid_grant") || 
-              refreshError?.message?.includes("Token has been expired")) {
-            console.warn("⚠️  Refresh token expired or invalid. Will initiate OAuth flow...");
+        const now = Date.now();
+        const expiryDate = tokens.expiry_date;
+        const fiveMinutesInMs = 5 * 60 * 1000;
+        
+        // Check if token is expired or will expire within 5 minutes
+        const shouldRefresh = !expiryDate || (expiryDate <= (now + fiveMinutesInMs));
+        
+        if (shouldRefresh) {
+          try {
+            const { credentials: refreshedCredentials } = await oAuth2Client.refreshAccessToken();
             
-            // Send Discord notification
-            await sendDiscordNotification(
-              "Refresh token has expired or is invalid. OAuth re-authentication flow will be initiated.\n\n" +
-              "**Action Required:** Please complete the OAuth authentication when prompted.",
-              "⚠️ OAuth Token Expired"
-            );
+            // Update tokens in file (preserve refresh_token if not returned)
+            const updatedTokens = {
+              ...tokens,
+              ...refreshedCredentials,
+              refresh_token: refreshedCredentials.refresh_token || tokens.refresh_token,
+            };
+            saveTokensToFile(updatedTokens, oauthTokenPath);
+            console.log("   ✓ Tokens refreshed during initialization");
+          } catch (refreshError: any) {
+            if (refreshError?.response?.data?.error === "invalid_client" || 
+                refreshError?.code === 401) {
+              throw new Error(
+                `Invalid OAuth credentials. The client ID or client secret in your .env file is incorrect.\n` +
+                `Please verify your credentials at https://console.cloud.google.com/apis/credentials\n` +
+                `Error: ${refreshError.message || "invalid_client"}`
+              );
+            }
             
-            throw refreshError; // Re-throw to trigger OAuth flow
+            // Check for invalid_grant errors (refresh token expired/invalid)
+            const isInvalidGrant = 
+              refreshError?.response?.data?.error === "invalid_grant" ||
+              refreshError?.message?.includes("invalid_grant") ||
+              refreshError?.message?.includes("Token has been expired") ||
+              refreshError?.message?.includes("token has been expired") ||
+              refreshError?.message?.includes("Refresh token has expired");
+            
+            if (isInvalidGrant) {
+              // Refresh token is invalid/expired, but don't immediately trigger re-auth
+              // The OAuth2 client will attempt automatic refresh on API calls, and if that fails,
+              // the error will be caught and handled appropriately
+              console.warn("⚠️  Refresh token appears to be expired or invalid.");
+              console.warn("   The system will attempt automatic refresh on next API call.");
+              console.warn("   If automatic refresh fails, re-authentication will be required.");
+              
+              // Send Discord notification (but don't throw - let automatic refresh handle it)
+              await sendDiscordNotification(
+                "Refresh token has expired or is invalid. The system will attempt automatic refresh on the next API call.\n\n" +
+                "**Note:** If automatic refresh fails, you will be prompted to re-authenticate.",
+                "⚠️ OAuth Token Expired"
+              );
+              
+              // Don't throw - let the automatic refresh mechanism handle it during API calls
+              // The OAuth2 client's automatic refresh will try again, and if it fails during
+              // an actual API call, that's when we should trigger re-auth
+            } else {
+              // For other errors, log but don't throw - let automatic refresh handle it
+              console.warn(`⚠️  Failed to refresh tokens during initialization: ${refreshError.message || String(refreshError)}`);
+              console.warn("   The system will attempt automatic refresh on next API call.");
+            }
           }
-          throw refreshError;
+        } else {
+          console.log(`   ✓ Access token is still valid (expires: ${new Date(expiryDate).toLocaleString()})`);
         }
       }
       
@@ -286,10 +363,17 @@ export async function createAuthClient(): Promise<any> {
       }
       
       // Tokens not found or invalid (but credentials are valid), initiate OAuth flow
-      if (error?.message?.includes("Error loading token file") || 
-          error?.message?.includes("invalid_grant") ||
-          error?.message?.includes("Token has been expired")) {
+      const isTokenError = 
+        error?.message?.includes("Error loading token file") || 
+        error?.message?.includes("Token file not found") ||
+        error?.message?.includes("invalid_grant") ||
+        error?.message?.includes("Token has been expired") ||
+        error?.code === "ENOENT"; // File not found error code
+      
+      if (isTokenError) {
         console.log("📋 No valid tokens found. Initiating OAuth flow...");
+        console.log(`   Token path: ${oauthTokenPath}`);
+        console.log(`   Error: ${error.message || String(error)}`);
         
         // Send Discord notification
         await sendDiscordNotification(
@@ -303,6 +387,7 @@ export async function createAuthClient(): Promise<any> {
           // After flow completes, load the newly saved tokens
           const tokens = loadTokensFromFile(oauthTokenPath);
           oAuth2Client.setCredentials(tokens);
+          console.log("   ✓ OAuth flow completed, tokens loaded successfully");
           return oAuth2Client;
         } catch (oauthError: any) {
           // Check if it's an invalid_client error during OAuth flow
@@ -558,7 +643,9 @@ export async function handleOAuthCallback(code: string): Promise<void> {
 
   try {
     const { tokens } = await oauth2Client.getToken(code);
+    console.log(`   ✓ OAuth tokens received, saving to: ${tokenPath}`);
     saveTokensToFile(tokens, tokenPath);
+    console.log(`   ✓ OAuth authentication completed successfully`);
   } catch (error: any) {
     // Check if it's an invalid_client error
     if (error?.response?.data?.error === "invalid_client" || 
@@ -599,6 +686,18 @@ export async function refreshTokens(): Promise<string> {
 
     if (!currentTokens.refresh_token) {
       throw new Error("No refresh token available. Please re-authenticate.");
+    }
+
+    // Check if token is about to expire (within 10 minutes) before refreshing
+    // This avoids unnecessary refreshes when the token is still valid
+    const now = Date.now();
+    const expiryDate = currentTokens.expiry_date;
+    const tenMinutesInMs = 10 * 60 * 1000;
+    
+    if (expiryDate && expiryDate > (now + tenMinutesInMs)) {
+      // Token is still valid for more than 10 minutes, no need to refresh yet
+      const minutesUntilExpiry = Math.round((expiryDate - now) / 60000);
+      return `Token is still valid (expires in ${minutesUntilExpiry} minutes). Skipping refresh.`;
     }
 
     // Create OAuth2 client and set credentials

@@ -1,0 +1,15 @@
+{
+  "accounts": [
+    {
+      "mcpEndpoint": "wss://example-1/mcp/?token=token1",
+      "tokenPath": "~/.google-mcp/tokens-user1.json",
+      "http": true
+    },
+    {
+      "mcpEndpoint": "wss://example-2/mcp/?token=token2",
+      "tokenPath": "~/.google-mcp/tokens-user2.json"
+    }
+  ]
+}
+
+

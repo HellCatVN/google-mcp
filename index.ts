@@ -23,11 +23,24 @@ const __dirname = dirname(__filename);
 const isSpawnedByBridge = process.env.MCP_SPAWNED_BY_BRIDGE === "true";
 
 const isPiped = !process.stdin.isTTY;
-const hasMcpEndpointBeforeEnv = !!(process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
 const isPm2 = !!(process.env.PM2_HOME || process.env.pm_id !== undefined || process.env.name !== undefined);
 
-// Load .env file from project root using absolute path
-// This ensures it works even when PM2 runs from a different working directory
+// Load accounts.json configuration (MANDATORY - no fallback to .env)
+import { loadAccountsConfig, findHttpAccount, ensureTokenPathEnv } from "./utils/config.js";
+console.log("🔍 Loading accounts configuration:");
+let accountsConfig: { accounts: Array<{ mcpEndpoint?: string; tokenPath: string; http?: boolean }> };
+try {
+  accountsConfig = loadAccountsConfig();
+  console.log(`   ✓ Accounts config loaded (${accountsConfig.accounts.length} account(s))`);
+} catch (error) {
+  console.error(`   ❌ Failed to load accounts config: ${error instanceof Error ? error.message : String(error)}`);
+  console.error(`\n💡 Please create config/accounts.json with your account configuration.`);
+  console.error(`   See config/accounts.json.example for reference.\n`);
+  process.exit(1);
+}
+
+// Load .env file only for OAuth client credentials (CLIENT_ID, CLIENT_SECRET, etc.)
+// Token path and MCP endpoint are now configured via accounts.json
 const envPath = join(__dirname, ".env");
 console.log("🔍 Environment configuration:");
 console.log(`   Project root: ${__dirname}`);
@@ -35,39 +48,74 @@ console.log(`   Current working directory: ${process.cwd()}`);
 console.log(`   .env file path: ${envPath}`);
 console.log(`   .env file exists: ${existsSync(envPath)}`);
 
-// If we're spawned by bridge, don't load MCP_ENDPOINT from .env to prevent recursion
+// Load .env for OAuth credentials only (not for token path or endpoint)
 let envResult;
 if (isSpawnedByBridge) {
   // Load .env but exclude MCP_ENDPOINT to prevent recursion
-  // We need to manually remove it from process.env after loading because dotenv.config()
-  // modifies process.env directly
   envResult = dotenv.config({ path: envPath });
-  // Explicitly remove MCP_ENDPOINT from process.env after loading .env
-  // This prevents the spawned child from detecting MCP_ENDPOINT and running bridge mode again
   delete process.env.MCP_ENDPOINT;
   delete process.env.MCP_ENDPOINTS;
   if (envResult.parsed) {
     delete envResult.parsed.MCP_ENDPOINT;
     delete envResult.parsed.MCP_ENDPOINTS;
   }
-  if (envResult.error) {
+  if (envResult.error && !envResult.error.message.includes("ENOENT")) {
     console.log(`   ⚠️  Error loading .env: ${envResult.error.message}`);
-  } else {
-    console.log(`   ✓ .env file loaded successfully (MCP_ENDPOINT excluded to prevent recursion)`);
-    console.log(`   Loaded ${Object.keys(envResult.parsed || {}).length} environment variables`);
+  } else if (envResult.parsed) {
+    console.log(`   ✓ .env file loaded (OAuth credentials only)`);
   }
 } else {
   envResult = dotenv.config({ path: envPath });
-  if (envResult.error) {
+  if (envResult.error && !envResult.error.message.includes("ENOENT")) {
     console.log(`   ⚠️  Error loading .env: ${envResult.error.message}`);
-  } else {
-    console.log(`   ✓ .env file loaded successfully`);
-    console.log(`   Loaded ${Object.keys(envResult.parsed || {}).length} environment variables`);
+  } else if (envResult.parsed) {
+    console.log(`   ✓ .env file loaded (OAuth credentials only)`);
   }
 }
 
-// Now check MCP_ENDPOINT after loading .env (if we weren't spawned by bridge)
-const hasMcpEndpoint = !!(process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
+// Configure account from accounts.json (MANDATORY - no fallback)
+let selectedAccount: { mcpEndpoint?: string; tokenPath: string; http?: boolean };
+if (!isSpawnedByBridge) {
+  // Check if any account has an endpoint (bridge mode)
+  const accountWithEndpoint = accountsConfig.accounts.find(a => a.mcpEndpoint);
+  
+  if (accountWithEndpoint) {
+    // Bridge mode: use account with endpoint
+    selectedAccount = accountWithEndpoint as { mcpEndpoint?: string; tokenPath: string; http?: boolean };
+    ensureTokenPathEnv(selectedAccount.tokenPath);
+    console.log(`   ✓ Using account with endpoint for bridge mode`);
+    console.log(`   ✓ Set GOOGLE_OAUTH_TOKEN_PATH from accounts.json: ${selectedAccount.tokenPath}`);
+  } else {
+    // HTTP mode: find the HTTP account (required)
+    try {
+      selectedAccount = findHttpAccount(accountsConfig.accounts);
+      ensureTokenPathEnv(selectedAccount.tokenPath);
+      console.log(`   ✓ Using HTTP account from config`);
+      console.log(`   ✓ Set GOOGLE_OAUTH_TOKEN_PATH from accounts.json: ${selectedAccount.tokenPath}`);
+    } catch (error) {
+      console.error(`   ❌ ${error instanceof Error ? error.message : String(error)}`);
+      console.error(`\n💡 Please configure exactly one account with http: true in config/accounts.json for HTTP mode.`);
+      console.error(`   Or add an account with mcpEndpoint for bridge mode.\n`);
+      process.exit(1);
+    }
+  }
+} else {
+  // When spawned by bridge, we still need to set token path from accounts.json
+  // Find any account (prefer HTTP account, but any will work)
+  try {
+    selectedAccount = findHttpAccount(accountsConfig.accounts);
+  } catch {
+    // If no HTTP account, use first account
+    if (accountsConfig.accounts.length > 0) {
+      selectedAccount = accountsConfig.accounts[0] as { mcpEndpoint?: string; tokenPath: string; http?: boolean };
+    } else {
+      console.error(`   ❌ No accounts found in config/accounts.json`);
+      process.exit(1);
+    }
+  }
+  ensureTokenPathEnv(selectedAccount.tokenPath);
+  console.log(`   ✓ Set GOOGLE_OAUTH_TOKEN_PATH from accounts.json: ${selectedAccount.tokenPath}`);
+}
 
 // Debug logging for mode detection
 console.log("🔍 Mode detection:");
@@ -75,17 +123,26 @@ console.log(`   MCP_SPAWNED_BY_BRIDGE: ${process.env.MCP_SPAWNED_BY_BRIDGE || 'N
 console.log(`   stdin.isTTY: ${process.stdin.isTTY}`);
 console.log(`   isPiped: ${isPiped}`);
 console.log(`   Running under PM2: ${isPm2}`);
-console.log(`   PM2 env vars: PM2_HOME=${process.env.PM2_HOME ? 'SET' : 'NOT SET'}, pm_id=${process.env.pm_id || 'NOT SET'}, name=${process.env.name || 'NOT SET'}`);
-console.log(`   MCP_ENDPOINT before .env: ${hasMcpEndpointBeforeEnv ? 'SET' : 'NOT SET'}`);
 console.log(`   Spawned by bridge: ${isSpawnedByBridge} (${isSpawnedByBridge ? 'explicit flag set' : 'not spawned by bridge'})`);
-console.log(`   MCP_ENDPOINT from env (after .env): ${process.env.MCP_ENDPOINT ? process.env.MCP_ENDPOINT.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
-console.log(`   MCP_ENDPOINTS from env (after .env): ${process.env.MCP_ENDPOINTS ? process.env.MCP_ENDPOINTS.replace(/token=[^&]+/, "token=***") : 'NOT SET'}`);
 
-// Auto-detect mode:
-// - If spawned by bridge: run stdio mode (MCP_ENDPOINT was explicitly removed)
-// - If MCP_ENDPOINT is set (and NOT spawned by bridge): run bridge mode
+// Auto-detect mode from accounts.json (MANDATORY - no fallback to env)
+// - If spawned by bridge: run stdio mode
+// - If account has mcpEndpoint: run bridge mode
 // - Otherwise: run HTTP server mode
-const MCP_ENDPOINT = isSpawnedByBridge ? undefined : (process.env.MCP_ENDPOINT || process.env.MCP_ENDPOINTS?.split(",")[0]);
+let resolvedEndpoint: string | undefined;
+if (!isSpawnedByBridge) {
+  if (selectedAccount.mcpEndpoint) {
+    resolvedEndpoint = selectedAccount.mcpEndpoint;
+    console.log(`   ✓ Using MCP_ENDPOINT from accounts.json: ${resolvedEndpoint.replace(/token=[^&]+/, "token=***")}`);
+    // Set it in process.env so bridge.ts can read it
+    process.env.MCP_ENDPOINT = resolvedEndpoint;
+  } else {
+    // HTTP mode - no endpoint needed
+    resolvedEndpoint = undefined;
+    console.log(`   ✓ HTTP server mode (no endpoint in account config)`);
+  }
+}
+const MCP_ENDPOINT = resolvedEndpoint;
 console.log(`   MCP_ENDPOINT (resolved): ${MCP_ENDPOINT ? MCP_ENDPOINT.replace(/token=[^&]+/, "token=***") : 'undefined'}`);
 console.log(`   Will run in: ${isSpawnedByBridge ? 'STDIO MODE (spawned by bridge)' : MCP_ENDPOINT ? 'BRIDGE MODE' : 'HTTP SERVER MODE'}`);
 
