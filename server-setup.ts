@@ -351,11 +351,11 @@ export function createGoogleMcpServer() {
       // Start proactive token refresh scheduler
       // Google OAuth access tokens expire after ~1 hour, so we need to refresh more frequently
       // Default: refresh every 50 minutes (before 1-hour expiration)
-      // Minimum: 15 minutes to avoid excessive API calls
+      // Minimum: 5 minutes (safe because refreshTokens() checks expiry_date locally before API calls)
       const configuredMinutes = parseInt(process.env.REFRESH_INTERVAL_MINUTES || "", 10);
       const defaultMinutes = 50; // Refresh every 50 minutes (before 1-hour token expiration)
       const minutes = configuredMinutes || defaultMinutes;
-      const intervalMs = Math.max(15, minutes) * 60 * 1000; // minimum 15 minutes
+      const intervalMs = Math.max(5, minutes) * 60 * 1000; // minimum 5 minutes
       console.log(
         `🔁 Proactive token refresh scheduler started (every ${Math.round(
           intervalMs / 60000
