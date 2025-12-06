@@ -16,8 +16,13 @@ const execAsync = promisify(exec);
  * Sends a Discord webhook notification
  * @param message - The message to send
  * @param title - Optional title for the embed
+ * @param color - Optional color for the embed (default: red 0xff6b6b)
  */
-async function sendDiscordNotification(message: string, title?: string): Promise<void> {
+async function sendDiscordNotification(
+  message: string,
+  title?: string,
+  color?: number
+): Promise<void> {
   const webhookUrl = process.env.DISCORD_HOOK;
   
   if (!webhookUrl) {
@@ -29,7 +34,7 @@ async function sendDiscordNotification(message: string, title?: string): Promise
     const embed = {
       title: title || "🔐 OAuth Token Expired",
       description: message,
-      color: 0xff6b6b, // Red color
+      color: color || 0xff6b6b, // Default: Red color, can be overridden
       timestamp: new Date().toISOString(),
       footer: {
         text: "Google MCP Server",
@@ -721,11 +726,28 @@ export async function refreshTokens(): Promise<string> {
 
     saveTokensToFile(updatedTokens, oauthTokenPath);
 
-    return `Tokens refreshed successfully. New expiry: ${
-      credentials.expiry_date
-        ? new Date(credentials.expiry_date).toLocaleString()
-        : "Unknown"
-    }`;
+    const expiryTime = credentials.expiry_date
+      ? new Date(credentials.expiry_date).toLocaleString()
+      : "Unknown";
+    const newExpiryDate = credentials.expiry_date
+      ? new Date(credentials.expiry_date)
+      : null;
+    const minutesUntilExpiry = newExpiryDate
+      ? Math.round((newExpiryDate.getTime() - Date.now()) / 60000)
+      : null;
+
+    // Send Discord notification on successful refresh
+    const expiryMessage = newExpiryDate
+      ? `**Next expiry:** ${expiryTime}\n**Time remaining:** ${minutesUntilExpiry} minutes`
+      : `**Next expiry:** ${expiryTime}`;
+    
+    await sendDiscordNotification(
+      `OAuth tokens have been refreshed successfully.\n\n${expiryMessage}`,
+      "✅ Token Refresh Successful",
+      0x57ab5a // Green color for success
+    );
+
+    return `Tokens refreshed successfully. New expiry: ${expiryTime}`;
   } catch (error) {
     throw new Error(
       `Failed to refresh tokens: ${
