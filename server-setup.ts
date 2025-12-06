@@ -303,6 +303,26 @@ export function createGoogleMcpServer() {
       googleTasksInstance = new GoogleTasks(authClient);
       console.log("✅ Google services initialized successfully");
 
+      // Check token expiry on startup and refresh if expiring within 10 minutes
+      // This ensures tokens are refreshed even after server restarts/crashes
+      // The refreshTokens() function already checks for 10-minute expiry threshold
+      (async () => {
+        try {
+          const result = await refreshTokens();
+          if (result.includes("Skipping refresh")) {
+            // Token is still valid, no action needed
+            console.log(`   ℹ️  ${result}`);
+          } else {
+            // Token was refreshed
+            console.log(`   🔁 Startup token refresh: ${result}`);
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : typeof e === "string" ? e : "Unknown error";
+          console.warn(`   ⚠️  Startup token refresh check failed: ${msg}`);
+          // Don't throw - allow server to continue, scheduler will handle future refreshes
+        }
+      })();
+
       // Helper function for Discord notifications
       const sendDiscord = async (message: string, title?: string) => {
         const webhook = process.env.DISCORD_HOOK;
