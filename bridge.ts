@@ -59,15 +59,29 @@ let backoff = INITIAL_BACKOFF;
 
 /**
  * Logging utility with debug mode support
+ * Uses console.log for normal operations, console.error only for actual errors
  * Only logs errors and important events when DEBUG_MODE is false
  */
 function log(message: string, ...args: any[]): void {
   const prefix = `[${TARGET_SERVER}]`;
+  // Determine if this is an error message (use stderr) or normal operation (use stdout)
+  const isError = message.includes("Error") || 
+                  message.includes("error") || 
+                  message.includes("Failed") || 
+                  message.includes("Connection error") ||
+                  message.includes("WebSocket closed") ||
+                  (message.includes("exited") && !message.includes("code=0"));
+  
   if (DEBUG_MODE) {
     const timestamp = new Date().toISOString();
     // Truncate large messages for readability
     const msg = message.length > 120 ? `${message.substring(0, 120)}...` : message;
-    console.error(`${timestamp} ${prefix} ${msg}`, ...args);
+    if (isError) {
+      console.error(`${timestamp} ${prefix} ${msg}`, ...args);
+    } else {
+      // Use stdout for normal operations (ping/pong, connections, etc.)
+      console.log(`${timestamp} ${prefix} ${msg}`, ...args);
+    }
   } else {
     // Only log important events (errors, connection status, fatal errors)
     // Skip verbose connection/reconnection messages
@@ -82,7 +96,12 @@ function log(message: string, ...args: any[]): void {
       "shutting down"
     ];
     if (importantMessages.some(keyword => message.includes(keyword))) {
-      console.error(`${prefix} ${message}`, ...args);
+      if (isError) {
+        console.error(`${prefix} ${message}`, ...args);
+      } else {
+        // Use stdout for successful operations
+        console.log(`${prefix} ${message}`, ...args);
+      }
     }
   }
 }
