@@ -26,7 +26,13 @@ const isPiped = !process.stdin.isTTY;
 const isPm2 = !!(process.env.PM2_HOME || process.env.pm_id !== undefined || process.env.name !== undefined);
 
 // Load accounts.json configuration (MANDATORY - no fallback to .env)
-import { loadAccountsConfig, findHttpAccount, ensureTokenPathEnv } from "./utils/config.js";
+import {
+  loadAccountsConfig,
+  findHttpAccount,
+  ensureTokenPathEnv,
+  ensureKeepCredentialsEnv,
+  type AccountConfig,
+} from "./utils/config.js";
 console.log("🔍 Loading accounts configuration:");
 let accountsConfig: { accounts: Array<{ mcpEndpoint?: string; tokenPath: string; http?: boolean }> };
 try {
@@ -74,15 +80,16 @@ if (isSpawnedByBridge) {
 }
 
 // Configure account from accounts.json (MANDATORY - no fallback)
-let selectedAccount: { mcpEndpoint?: string; tokenPath: string; http?: boolean };
+let selectedAccount: AccountConfig;
 if (!isSpawnedByBridge) {
   // Check if any account has an endpoint (bridge mode)
   const accountWithEndpoint = accountsConfig.accounts.find(a => a.mcpEndpoint);
   
   if (accountWithEndpoint) {
     // Bridge mode: use account with endpoint
-    selectedAccount = accountWithEndpoint as { mcpEndpoint?: string; tokenPath: string; http?: boolean };
+    selectedAccount = accountWithEndpoint as AccountConfig;
     ensureTokenPathEnv(selectedAccount.tokenPath);
+    ensureKeepCredentialsEnv(accountWithEndpoint);
     console.log(`   ✓ Using account with endpoint for bridge mode`);
     console.log(`   ✓ Set GOOGLE_OAUTH_TOKEN_PATH from accounts.json: ${selectedAccount.tokenPath}`);
   } else {
@@ -90,6 +97,7 @@ if (!isSpawnedByBridge) {
     try {
       selectedAccount = findHttpAccount(accountsConfig.accounts);
       ensureTokenPathEnv(selectedAccount.tokenPath);
+      ensureKeepCredentialsEnv(selectedAccount);
       console.log(`   ✓ Using HTTP account from config`);
       console.log(`   ✓ Set GOOGLE_OAUTH_TOKEN_PATH from accounts.json: ${selectedAccount.tokenPath}`);
     } catch (error) {
@@ -107,15 +115,31 @@ if (!isSpawnedByBridge) {
   } catch {
     // If no HTTP account, use first account
     if (accountsConfig.accounts.length > 0) {
-      selectedAccount = accountsConfig.accounts[0] as { mcpEndpoint?: string; tokenPath: string; http?: boolean };
+      selectedAccount = accountsConfig.accounts[0] as AccountConfig;
     } else {
       console.error(`   ❌ No accounts found in config/accounts.json`);
       process.exit(1);
     }
   }
   ensureTokenPathEnv(selectedAccount.tokenPath);
+  ensureKeepCredentialsEnv(selectedAccount);
   console.log(`   ✓ Set GOOGLE_OAUTH_TOKEN_PATH from accounts.json: ${selectedAccount.tokenPath}`);
 }
+
+// Log unofficial Google Keep credentials presence (without secrets)
+console.log("🔍 Google Keep (unofficial) configuration:");
+console.log(
+  `   GOOGLE_KEEP_EMAIL: ${
+    process.env.GOOGLE_KEEP_EMAIL
+      ? `***${process.env.GOOGLE_KEEP_EMAIL.slice(-6)}`
+      : "NOT SET"
+  }`
+);
+console.log(
+  `   GOOGLE_KEEP_MASTER_TOKEN: ${
+    process.env.GOOGLE_KEEP_MASTER_TOKEN ? "SET" : "NOT SET"
+  }`
+);
 
 // Debug logging for mode detection
 console.log("🔍 Mode detection:");

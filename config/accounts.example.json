@@ -3,7 +3,9 @@
     {
       "mcpEndpoint": "wss://example-1/mcp/?token=token1",
       "tokenPath": "~/.google-mcp/tokens-user1.json",
-      "http": true
+      "http": true,
+      "email": "your-google-email@example.com",
+      "masterToken": "gkeep-master-token-or-encrypted-password"
     },
     {
       "mcpEndpoint": "wss://example-2/mcp/?token=token2",

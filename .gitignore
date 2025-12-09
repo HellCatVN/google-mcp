@@ -36,3 +36,5 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .google-mcp
 pnpm-lock.yaml
 config/accounts.json
+
+gkeepapi-py/

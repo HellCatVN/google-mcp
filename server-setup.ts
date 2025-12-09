@@ -9,6 +9,7 @@ import GoogleCalendar from "./utils/calendar";
 import GoogleGmail from "./utils/gmail";
 import GoogleDrive from "./utils/drive";
 import GoogleTasks from "./utils/tasks";
+import { GoogleKeepUnofficial, createKeepFromEnv } from "./utils/unofficial/keep";
 
 // Import handlers
 import * as calendarHandlers from "./handlers/calendar";
@@ -16,6 +17,7 @@ import * as gmailHandlers from "./handlers/gmail";
 import * as driveHandlers from "./handlers/drive";
 import * as tasksHandlers from "./handlers/tasks";
 import * as oauthHandlers from "./handlers/oauth";
+import * as keepHandlers from "./handlers/unofficial/keep";
 import { refreshTokens } from "./utils/auth";
 
 export function createGoogleMcpServer() {
@@ -24,7 +26,9 @@ export function createGoogleMcpServer() {
   let googleGmailInstance: GoogleGmail;
   let googleDriveInstance: GoogleDrive;
   let googleTasksInstance: GoogleTasks;
+  let googleKeepUnofficialInstance: GoogleKeepUnofficial | undefined;
   let initializationPromise: Promise<void>;
+  let keepInitializationPromise: Promise<void> | undefined;
 
   // Service setters for OAuth handlers
   const setGoogleCalendarInstance = (instance: GoogleCalendar) => {
@@ -83,6 +87,176 @@ export function createGoogleMcpServer() {
           setGoogleDriveInstance,
           setGoogleTasksInstance,
         });
+      }
+
+      const keepToolNames = [
+        "google_keep_unofficial_list_notes",
+        "google_keep_unofficial_toggle_item",
+        "google_keep_unofficial_update_list",
+        "google_keep_unofficial_get_note",
+        "google_keep_unofficial_update_note",
+        "google_keep_unofficial_create_note",
+        "google_keep_unofficial_create_list",
+        "google_keep_unofficial_trash",
+        "google_keep_unofficial_restore",
+        "google_keep_unofficial_archive",
+        "google_keep_unofficial_unarchive",
+        "google_keep_unofficial_pin",
+        "google_keep_unofficial_unpin",
+        "google_keep_unofficial_delete",
+        "google_keep_unofficial_add_list_item",
+        "google_keep_unofficial_update_list_item_text",
+        "google_keep_unofficial_remove_list_item",
+      ];
+
+      if (keepToolNames.includes(name)) {
+        console.log(`📝 [Keep] Keep tool detected: ${name}`);
+        console.log(`📝 [Keep] Arguments:`, JSON.stringify(args, null, 2));
+        
+        if (!keepInitializationPromise) {
+          console.log(`🔐 [Keep] Initializing Google Keep (unofficial)...`);
+          keepInitializationPromise = Promise.resolve()
+            .then(() => {
+              googleKeepUnofficialInstance = createKeepFromEnv();
+              console.log("✅ Google Keep (unofficial) initialized");
+            })
+            .catch((error) => {
+              console.error(`❌ [Keep] Initialization failed:`, error);
+              keepInitializationPromise = undefined;
+              throw error;
+            });
+        }
+
+        console.log(`⏳ [Keep] Waiting for initialization...`);
+        await keepInitializationPromise;
+
+        if (!googleKeepUnofficialInstance) {
+          console.error(`❌ [Keep] Instance is null after initialization!`);
+          throw new Error("Google Keep (unofficial) failed to initialize.");
+        }
+        
+        console.log(`✅ [Keep] Instance ready, routing to handler...`);
+
+        try {
+          let result;
+          switch (name) {
+            case "google_keep_unofficial_list_notes":
+              result = await keepHandlers.handleKeepListNotes(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_toggle_item":
+              result = await keepHandlers.handleKeepToggleItem(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_update_list":
+              result = await keepHandlers.handleKeepUpdateList(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_get_note":
+              result = await keepHandlers.handleKeepGetNote(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_update_note":
+              result = await keepHandlers.handleKeepUpdateNote(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_create_note":
+              result = await keepHandlers.handleKeepCreateNote(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_create_list":
+              result = await keepHandlers.handleKeepCreateList(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_trash":
+              result = await keepHandlers.handleKeepTrash(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_restore":
+              result = await keepHandlers.handleKeepRestore(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_archive":
+              result = await keepHandlers.handleKeepArchive(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_unarchive":
+              result = await keepHandlers.handleKeepUnarchive(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_pin":
+              result = await keepHandlers.handleKeepPin(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_unpin":
+              result = await keepHandlers.handleKeepUnpin(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_delete":
+              result = await keepHandlers.handleKeepDelete(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_add_list_item":
+              result = await keepHandlers.handleKeepAddListItem(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_update_list_item_text":
+              result = await keepHandlers.handleKeepUpdateListItemText(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            case "google_keep_unofficial_remove_list_item":
+              result = await keepHandlers.handleKeepRemoveListItem(
+                args,
+                googleKeepUnofficialInstance
+              );
+              break;
+            default:
+              console.error(`❌ [Keep] Unknown Keep tool: ${name}`);
+              throw new Error(`Unknown Keep tool: ${name}`);
+          }
+          console.log(`✅ [Keep] Tool ${name} completed successfully`);
+          return result;
+        } catch (error) {
+          console.error(`❌ [Keep] Error in tool ${name}:`, error);
+          console.error(`   Error type: ${error instanceof Error ? error.constructor.name : typeof error}`);
+          console.error(`   Error message: ${error instanceof Error ? error.message : String(error)}`);
+          if (error instanceof Error && error.stack) {
+            console.error(`   Error stack: ${error.stack}`);
+          }
+          throw error;
+        }
       }
 
       // For all other tools, ensure initialization is complete

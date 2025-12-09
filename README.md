@@ -389,6 +389,32 @@ PORT=3000
 
 **Note**: `GOOGLE_OAUTH_TOKEN_PATH` and `MCP_ENDPOINT` are no longer used. Configure these in `config/accounts.json` instead.
 
+## Google Keep (Unofficial) — Getting a master token
+
+The unofficial Keep tools use the Android-style master token (EncryptedPasswd), not an app password or standard OAuth client credentials.
+
+### Quick path (if you already have a master token)
+- Set `GOOGLE_KEEP_EMAIL` and `GOOGLE_KEEP_MASTER_TOKEN` via `config/accounts.json` (fields `email`/`masterToken` or `keepEmail`/`keepMasterToken`).
+
+### How to obtain a master token via the alternative flow
+This follows the gpsoauth alternative flow: [link](https://github.com/simon-weber/gpsoauth?tab=readme-ov-file#alternative-flow).
+
+1) Visit `https://accounts.google.com/EmbeddedSetup` in a clean/incognito browser, sign in, and click “I agree.”  
+   - The page often hangs forever; that’s expected. While it hangs, the `oauth_token` cookie is usually set.
+2) In that same tab, open DevTools → Application → Storage → Cookies → `https://accounts.google.com`, copy the `oauth_token` cookie value.
+3) Run the helper script to exchange it for a master token:
+   ```bash
+   pip install gpsoauth
+   python lib/gkeepapi/get_master_token.py --email "your@gmail.com" --oauth-token "COOKIE_VALUE" --android-id "0123456789abcdef"
+   ```
+   The script prints the master token (keep it secret).
+4) Place the token in `config/accounts.json` (e.g., `masterToken`) alongside the matching `email`.
+
+Notes:
+- The EmbeddedSetup hang is normal; the key is grabbing the `oauth_token` cookie while the page is “loading.”
+- Ensure email and master token belong to the same account; mismatches will cause 401.
+- If the cookie never appears, try another browser/incognito with third-party cookies allowed and no blocking extensions.
+
 ## Transport Support
 
 This MCP server supports multiple transport modes based on configuration:

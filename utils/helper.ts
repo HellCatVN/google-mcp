@@ -434,3 +434,149 @@ export function isDownloadAttachmentsArgs(args: any): args is {
     (args.downloadPath === undefined || typeof args.downloadPath === "string")
   );
 }
+
+// Google Keep (unofficial) validation functions
+export function isKeepListNotesArgs(args: any): args is {
+  filterType?: "LIST" | "NOTE";
+  query?: string;
+  includeItems?: boolean;
+  forceRefresh?: boolean;
+} {
+  return (
+    typeof args === "object" &&
+    (args.filterType === undefined ||
+      args.filterType === "LIST" ||
+      args.filterType === "NOTE") &&
+    (args.query === undefined || typeof args.query === "string") &&
+    (args.includeItems === undefined || typeof args.includeItems === "boolean") &&
+    (args.forceRefresh === undefined || typeof args.forceRefresh === "boolean")
+  );
+}
+
+export function isKeepToggleItemArgs(args: any): args is {
+  listIdOrTitle: string;
+  itemTextOrId: string;
+  checked: boolean;
+} {
+  return (
+    typeof args === "object" &&
+    typeof args.listIdOrTitle === "string" &&
+    typeof args.itemTextOrId === "string" &&
+    typeof args.checked === "boolean"
+  );
+}
+
+export function isKeepUpdateListArgs(args: any): args is {
+  listIdOrTitle: string;
+  title?: string;
+  color?: string;
+} {
+  return (
+    typeof args === "object" &&
+    typeof args.listIdOrTitle === "string" &&
+    (args.title === undefined || typeof args.title === "string") &&
+    (args.color === undefined || typeof args.color === "string")
+  );
+}
+
+export function isKeepGetNoteArgs(args: any): args is {
+  noteIdOrTitle: string;
+  forceRefresh?: boolean;
+} {
+  return (
+    typeof args === "object" &&
+    typeof args.noteIdOrTitle === "string" &&
+    (args.forceRefresh === undefined || typeof args.forceRefresh === "boolean")
+  );
+}
+
+export function isKeepUpdateNoteArgs(args: any): args is {
+  noteIdOrTitle: string;
+  title?: string;
+  text?: string;
+  color?: string;
+} {
+  return (
+    typeof args === "object" &&
+    typeof args.noteIdOrTitle === "string" &&
+    (args.title === undefined || typeof args.title === "string") &&
+    (args.text === undefined || typeof args.text === "string") &&
+    (args.color === undefined || typeof args.color === "string")
+  );
+}
+
+export function isKeepCreateNoteArgs(args: any): args is {
+  title?: string;
+  text?: string;
+  color?: string;
+} {
+  return (
+    typeof args === "object" &&
+    (args.title === undefined || typeof args.title === "string") &&
+    (args.text === undefined || typeof args.text === "string") &&
+    (args.color === undefined || typeof args.color === "string")
+  );
+}
+
+export function isKeepCreateListArgs(args: any): args is {
+  title?: string;
+  items?: Array<{ text: string; checked?: boolean }>;
+  color?: string;
+} {
+  return (
+    typeof args === "object" &&
+    (args.title === undefined || typeof args.title === "string") &&
+    (args.items === undefined ||
+      (Array.isArray(args.items) &&
+        args.items.every(
+          (item: any) =>
+            typeof item === "object" &&
+            typeof item.text === "string" &&
+            (item.checked === undefined || typeof item.checked === "boolean")
+        ))) &&
+    (args.color === undefined || typeof args.color === "string")
+  );
+}
+
+export function isKeepNodeIdOrTitleArgs(args: any): args is {
+  nodeIdOrTitle: string;
+} {
+  return typeof args === "object" && typeof args.nodeIdOrTitle === "string";
+}
+
+export function isKeepAddListItemArgs(args: any): args is {
+  listIdOrTitle: string;
+  text: string;
+  checked?: boolean;
+} {
+  return (
+    typeof args === "object" &&
+    typeof args.listIdOrTitle === "string" &&
+    typeof args.text === "string" &&
+    (args.checked === undefined || typeof args.checked === "boolean")
+  );
+}
+
+export function isKeepUpdateListItemTextArgs(args: any): args is {
+  listIdOrTitle: string;
+  itemTextOrId: string;
+  newText: string;
+} {
+  return (
+    typeof args === "object" &&
+    typeof args.listIdOrTitle === "string" &&
+    typeof args.itemTextOrId === "string" &&
+    typeof args.newText === "string"
+  );
+}
+
+export function isKeepRemoveListItemArgs(args: any): args is {
+  listIdOrTitle: string;
+  itemTextOrId: string;
+} {
+  return (
+    typeof args === "object" &&
+    typeof args.listIdOrTitle === "string" &&
+    typeof args.itemTextOrId === "string"
+  );
+}

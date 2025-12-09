@@ -7,6 +7,12 @@ export interface AccountConfig {
   mcpEndpoint?: string; // WebSocket endpoint for bridge mode
   tokenPath: string; // Path to OAuth tokens JSON
   http?: boolean; // Exactly one account should have http=true
+  // Optional credentials for unofficial Google Keep (gkeepapi)
+  email?: string;
+  keepEmail?: string;
+  masterToken?: string;
+  keepMasterToken?: string;
+  encryptedPassword?: string;
 }
 
 export interface AccountsFile {
@@ -83,6 +89,19 @@ export function findHttpAccount(accounts: AccountConfig[]): AccountConfig {
 
 export function ensureTokenPathEnv(tokenPath: string): void {
   process.env.GOOGLE_OAUTH_TOKEN_PATH = tokenPath;
+}
+
+export function ensureKeepCredentialsEnv(account: AccountConfig): void {
+  const keepEmail = account.keepEmail || account.email;
+  const keepMasterToken =
+    account.keepMasterToken || account.masterToken || account.encryptedPassword;
+
+  if (keepEmail) {
+    process.env.GOOGLE_KEEP_EMAIL = keepEmail;
+  }
+  if (keepMasterToken) {
+    process.env.GOOGLE_KEEP_MASTER_TOKEN = keepMasterToken;
+  }
 }
 
 

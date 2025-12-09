@@ -3,6 +3,7 @@ import { calendarTools } from "./calendar/index";
 import { gmailTools } from "./gmail/index";
 import { driveTools } from "./drive/index";
 import { tasksTools } from "./tasks/index";
+import { unofficialKeepTools } from "./unofficial/keep/index";
 
 const tools = [
   // OAuth tools
@@ -19,6 +20,9 @@ const tools = [
 
   // Google Tasks tools
   ...tasksTools,
+
+  // Google Keep (unofficial) tools
+  ...unofficialKeepTools,
 ];
 
 export default tools;
