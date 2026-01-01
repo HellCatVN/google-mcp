@@ -374,17 +374,12 @@ export function createGoogleMcpServer() {
         try {
           const result = await refreshTokens();
           console.log(`🔁 ${result}`);
-          // Optionally notify success once per day could be added; for now, no Discord on success
+          // Discord notification already sent by refreshTokens() on success/failure
         } catch (e) {
           const msg =
             e instanceof Error ? e.message : typeof e === "string" ? e : "Unknown error";
           console.warn(`⚠️  Scheduled token refresh failed: ${msg}`);
-          // Notify via Discord if configured
-          await sendDiscord(
-            `Scheduled token refresh failed.\n\nError: ${msg}\n\n` +
-              "If this persists, re-authentication may be required.",
-            "⚠️ Scheduled Token Refresh Failed"
-          );
+          // Discord notification already sent by refreshTokens()
         }
       }, intervalMs);
     })

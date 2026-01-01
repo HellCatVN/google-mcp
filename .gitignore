@@ -36,3 +36,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .google-mcp
 pnpm-lock.yaml
 config/accounts.json
+.claude
+CLAUDE.md 
+GEMINI.md

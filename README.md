@@ -46,22 +46,29 @@ Click below for one-click install with `.mcpb`:
 
 ## What's New
 
-### 🆕 v1.2.0 - Accounts Configuration
+### 🆕 v1.2.0 - Enhanced Token Refresh & Error Handling
 
-- **New `config/accounts.json` Configuration**: 
-  - Token paths and MCP endpoints are now configured via `config/accounts.json`
-  - No longer need `GOOGLE_OAUTH_TOKEN_PATH` or `MCP_ENDPOINT` in `.env`
+- **Intelligent Error Classification**:
+  - Automatic error parsing from Google OAuth API responses
+  - Error types: `invalid_grant`, `invalid_client`, `network`, `rate_limit`, `unknown`
+  - Actionable guidance for each error type
+  - Recoverable errors automatically retried with exponential backoff
+
+- **Advanced Token Refresh**:
+  - Pre-refresh token state logging (age, expiry, refresh_token presence)
+  - Retry logic for network/rate_limit errors (1-2 retries, 5-30s backoff)
+  - Discord notifications with error classification and specific actions
+  - Smart refresh: only when token expires within 10 minutes
+  - Configurable refresh interval (default: 50 min, minimum: 15 min)
+
+- **New `config/accounts.json` Configuration**:
+  - Token paths and MCP endpoints configured via `config/accounts.json`
   - Support for multiple accounts with shared token paths
-  - Automatic mode detection (bridge mode vs HTTP server mode)
+  - Automatic mode detection (bridge vs HTTP server)
 
-- **Improved Token Refresh**:
-  - Default refresh interval changed from 720 minutes to 50 minutes (before 1-hour token expiration)
-  - Smart refresh: only refreshes when token expires within 10 minutes
-  - Automatic token refresh scheduler with configurable interval
-
-- **Better Error Handling**:
-  - Automatic OAuth flow when token file is missing
-  - Improved error messages and logging
+- **Improved Error Handling**:
+  - Automatic OAuth flow when token file missing
+  - Enhanced error messages with debug context
   - Port conflict resolution for OAuth server
 
 ### v1.1.0
@@ -155,6 +162,42 @@ The server includes built-in OAuth token management to handle expired access tok
 - **Complete Re-authentication**: Automatically handle cases where refresh tokens are invalid or expired
 - **Persistent Storage**: Refreshed tokens are automatically saved to your configured token file path
 - **Session Continuity**: All Google services are re-initialized with fresh tokens after refresh
+- **Intelligent Error Handling**: Automatic error classification and retry logic for recoverable errors
+- **Discord Notifications**: Real-time alerts for token refresh status and failures (optional)
+
+### Error Types & Actions
+
+| Error Type | Description | Recoverable | Automatic Action |
+|------------|-------------|-------------|------------------|
+| `invalid_grant` | Token expired or revoked | No | Requires re-authentication |
+| `invalid_client` | Incorrect OAuth credentials | No | Check `.env` credentials |
+| `network` | Network connectivity failure | Yes | Retry with 5-30s backoff |
+| `rate_limit` | Too many API requests | Yes | Retry with exponential backoff |
+| `unknown` | Unclassified error | No | Check logs for details |
+
+### Discord Notifications
+
+Configure `DISCORD_HOOK` in `.env` to receive real-time alerts:
+
+**Success Example:**
+```
+✅ Token Refresh Successful
+OAuth tokens have been refreshed successfully.
+
+Next expiry: 2026-01-01 14:30:00
+Time remaining: 60 minutes
+```
+
+**Failure Example:**
+```
+⚠️ Token Refresh Failed: invalid_grant
+Error Type: invalid_grant
+Error Code: invalid_grant
+Details: Token has been expired
+Recoverable: No
+
+Action Required: Re-authenticate via OAuth flow
+```
 
 ### Refreshing Tokens
 
@@ -190,6 +233,8 @@ This automated process will:
 You'll only need to click "Allow" in the browser - everything else is automated!
 
 **Note**: If you don't have a valid refresh token, you'll need to go through the initial OAuth authentication flow again.
+
+**For detailed error handling documentation, see [docs/oauth-error-handling.md](docs/oauth-error-handling.md)**
 
 ### Manual Installation
 
@@ -475,5 +520,10 @@ pnpm run bridge
 ```
 
 Thank you for using Google MCP Tools! If you have any questions or suggestions, feel free to open an issue or contribute to the project.
+
+## Documentation
+
+- **[OAuth Error Handling](docs/oauth-error-handling.md)** - Detailed guide on token refresh error classification, retry logic, and Discord notifications
+- **[System Architecture](docs/system-architecture.md)** - Complete system architecture, component diagrams, and data flow
 
 Play around with the tools and enjoy!!

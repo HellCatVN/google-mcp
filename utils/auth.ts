@@ -670,6 +670,172 @@ export async function handleOAuthCallback(code: string): Promise<void> {
   }
 }
 
+/**
+ * Error classification for OAuth token refresh failures
+ */
+type TokenErrorType =
+  | "invalid_grant"
+  | "invalid_client"
+  | "network"
+  | "rate_limit"
+  | "unknown";
+
+/**
+ * Parsed error details from Google OAuth API response
+ */
+interface TokenRefreshError {
+  type: TokenErrorType;
+  code: string;
+  description: string;
+  isRecoverable: boolean;
+  action: string;
+  color: number;
+}
+
+/**
+ * Parses error from Google OAuth API response
+ * @param error - The error thrown during token refresh
+ * @returns Parsed error details
+ */
+function parseTokenRefreshError(error: unknown): {
+  errorCode: string;
+  errorDescription: string;
+  rawMessage: string;
+  hasResponse: boolean;
+} {
+  let errorCode = "unknown";
+  let errorDescription = "";
+  let rawMessage = "";
+  let hasResponse = false;
+
+  if (error instanceof Error) {
+    rawMessage = error.message;
+    // Google API errors often include JSON in message
+    const jsonMatch = error.message.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        errorCode = parsed.error || errorCode;
+        errorDescription = parsed.error_description || "";
+      } catch {
+        // Not JSON, use raw message
+      }
+    }
+    // Also check for error property on GaxiosError
+    const gaxiosError = error as {
+      response?: { data?: { error?: string; error_description?: string } };
+    };
+    if (gaxiosError.response?.data) {
+      hasResponse = true;
+      errorCode = gaxiosError.response.data.error || errorCode;
+      errorDescription =
+        gaxiosError.response.data.error_description || errorDescription;
+    }
+  }
+
+  return { errorCode, errorDescription, rawMessage, hasResponse };
+}
+
+/**
+ * Classifies OAuth errors from Google API response
+ * @param errorCode - Error code from Google API
+ * @param errorDescription - Error description from Google API
+ * @param rawMessage - Raw error message
+ * @param hasResponse - Whether the error has a response property (indicates API responded)
+ * @returns Classified error with action guidance
+ */
+function classifyTokenError(
+  errorCode: string,
+  errorDescription: string,
+  rawMessage: string,
+  hasResponse: boolean
+): TokenRefreshError {
+  const lowerDesc = errorDescription.toLowerCase();
+  const lowerMsg = rawMessage.toLowerCase();
+
+  // invalid_grant - token issues requiring re-auth
+  if (errorCode === "invalid_grant") {
+    let action = "Re-authenticate via OAuth flow";
+    if (lowerDesc.includes("revoked") || lowerDesc.includes("revoke")) {
+      action = "User revoked access. Re-authenticate via OAuth.";
+    } else if (lowerDesc.includes("expired")) {
+      action =
+        "Token expired. If using Testing mode, upgrade to Production and create new credentials.";
+    }
+    return {
+      type: "invalid_grant",
+      code: errorCode,
+      description: errorDescription || "Token expired or revoked",
+      isRecoverable: false,
+      action,
+      color: 0xff6b6b, // Red - critical
+    };
+  }
+
+  // invalid_client - configuration issues
+  if (errorCode === "invalid_client") {
+    return {
+      type: "invalid_client",
+      code: errorCode,
+      description: errorDescription || "Invalid client credentials",
+      isRecoverable: false,
+      action:
+        "Check GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET environment variables.",
+      color: 0xffa500, // Orange - config error
+    };
+  }
+
+  // Network errors - no response from API or network-related error message
+  if (
+    !hasResponse ||
+    lowerMsg.includes("econnrefused") ||
+    lowerMsg.includes("enotfound") ||
+    lowerMsg.includes("etimedout") ||
+    lowerMsg.includes("network") ||
+    lowerMsg.includes("fetch failed") ||
+    lowerMsg.includes("econnreset")
+  ) {
+    return {
+      type: "network",
+      code: "network_error",
+      description: "Network connection failed",
+      isRecoverable: true,
+      action: "Check network connectivity. Will retry automatically.",
+      color: 0xffcc00, // Yellow - transient
+    };
+  }
+
+  // Rate limiting
+  if (errorCode === "rate_limit_exceeded" || lowerMsg.includes("rate limit")) {
+    return {
+      type: "rate_limit",
+      code: errorCode,
+      description: "Rate limit exceeded",
+      isRecoverable: true,
+      action: "Too many requests. Will retry with backoff.",
+      color: 0xffcc00, // Yellow - transient
+    };
+  }
+
+  // Unknown
+  return {
+    type: "unknown",
+    code: errorCode,
+    description: errorDescription || rawMessage,
+    isRecoverable: false,
+    action: "Check logs for details. May require re-authentication.",
+    color: 0xff6b6b, // Red - assume critical
+  };
+}
+
+/**
+ * Sleep utility for retry delay
+ * @param ms - Milliseconds to sleep
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function refreshTokens(): Promise<string> {
   const oauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const oauthClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
@@ -685,76 +851,149 @@ export async function refreshTokens(): Promise<string> {
     );
   }
 
-  try {
-    // Load existing tokens
-    const currentTokens = loadTokensFromFile(oauthTokenPath);
+  // Load existing tokens once at the start
+  const currentTokens = loadTokensFromFile(oauthTokenPath);
 
-    if (!currentTokens.refresh_token) {
-      throw new Error("No refresh token available. Please re-authenticate.");
-    }
-
-    // Check if token is about to expire (within 10 minutes) before refreshing
-    // This avoids unnecessary refreshes when the token is still valid
-    const now = Date.now();
-    const expiryDate = currentTokens.expiry_date;
-    const tenMinutesInMs = 10 * 60 * 1000;
-    
-    if (expiryDate && expiryDate > (now + tenMinutesInMs)) {
-      // Token is still valid for more than 10 minutes, no need to refresh yet
-      const minutesUntilExpiry = Math.round((expiryDate - now) / 60000);
-      return `Token is still valid (expires in ${minutesUntilExpiry} minutes). Skipping refresh.`;
-    }
-
-    // Create OAuth2 client and set credentials
-    const oAuth2Client = new google.auth.OAuth2(
-      oauthClientId,
-      oauthClientSecret,
-      redirectUri
-    );
-
-    oAuth2Client.setCredentials(currentTokens);
-
-    // Refresh the access token
-    const { credentials } = await oAuth2Client.refreshAccessToken();
-
-    // Update tokens in file (preserve refresh_token if not returned)
-    const updatedTokens = {
-      ...currentTokens,
-      ...credentials,
-      refresh_token: credentials.refresh_token || currentTokens.refresh_token,
-    };
-
-    saveTokensToFile(updatedTokens, oauthTokenPath);
-
-    const expiryTime = credentials.expiry_date
-      ? new Date(credentials.expiry_date).toLocaleString()
-      : "Unknown";
-    const newExpiryDate = credentials.expiry_date
-      ? new Date(credentials.expiry_date)
-      : null;
-    const minutesUntilExpiry = newExpiryDate
-      ? Math.round((newExpiryDate.getTime() - Date.now()) / 60000)
-      : null;
-
-    // Send Discord notification on successful refresh
-    const expiryMessage = newExpiryDate
-      ? `**Next expiry:** ${expiryTime}\n**Time remaining:** ${minutesUntilExpiry} minutes`
-      : `**Next expiry:** ${expiryTime}`;
-    
-    await sendDiscordNotification(
-      `OAuth tokens have been refreshed successfully.\n\n${expiryMessage}`,
-      "✅ Token Refresh Successful",
-      0x57ab5a // Green color for success
-    );
-
-    return `Tokens refreshed successfully. New expiry: ${expiryTime}`;
-  } catch (error) {
-    throw new Error(
-      `Failed to refresh tokens: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    );
+  if (!currentTokens.refresh_token) {
+    throw new Error("No refresh token available. Please re-authenticate.");
   }
+
+  // Check if token is about to expire (within 10 minutes) before refreshing
+  const now = Date.now();
+  const expiryDate = currentTokens.expiry_date;
+  const tenMinutesInMs = 10 * 60 * 1000;
+
+  if (expiryDate && expiryDate > now + tenMinutesInMs) {
+    const minutesUntilExpiry = Math.round((expiryDate - now) / 60000);
+    return `Token is still valid (expires in ${minutesUntilExpiry} minutes). Skipping refresh.`;
+  }
+
+  // Log token state before refresh attempt
+  const tokenAge = expiryDate
+    ? Math.round((now - (expiryDate - 3600000)) / 60000) // Approx age in minutes (tokens last ~1 hour)
+    : "unknown";
+  const timeUntilExpiry = expiryDate
+    ? Math.round((expiryDate - now) / 60000)
+    : "unknown";
+
+  console.log(`🔄 Token refresh attempt:`, {
+    tokenAgeMinutes: tokenAge,
+    minutesUntilExpiry: timeUntilExpiry,
+    hasRefreshToken: !!currentTokens.refresh_token,
+    systemTime: new Date().toISOString(),
+    expiryTime: expiryDate ? new Date(expiryDate).toISOString() : "unknown",
+  });
+
+  // Create OAuth2 client and set credentials
+  const oAuth2Client = new google.auth.OAuth2(
+    oauthClientId,
+    oauthClientSecret,
+    redirectUri
+  );
+  oAuth2Client.setCredentials(currentTokens);
+
+  // Retry logic for recoverable errors
+  let lastError: unknown = null;
+  const maxRetries = 2;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      // Refresh the access token
+      const { credentials } = await oAuth2Client.refreshAccessToken();
+
+      // Update tokens in file (preserve refresh_token if not returned)
+      const updatedTokens = {
+        ...currentTokens,
+        ...credentials,
+        refresh_token: credentials.refresh_token || currentTokens.refresh_token,
+      };
+
+      saveTokensToFile(updatedTokens, oauthTokenPath);
+
+      const expiryTime = credentials.expiry_date
+        ? new Date(credentials.expiry_date).toLocaleString()
+        : "Unknown";
+      const newExpiryDate = credentials.expiry_date
+        ? new Date(credentials.expiry_date)
+        : null;
+      const minutesUntilExpiry = newExpiryDate
+        ? Math.round((newExpiryDate.getTime() - Date.now()) / 60000)
+        : null;
+
+      // Send Discord notification on successful refresh
+      const expiryMessage = newExpiryDate
+        ? `**Next expiry:** ${expiryTime}\n**Time remaining:** ${minutesUntilExpiry} minutes`
+        : `**Next expiry:** ${expiryTime}`;
+
+      await sendDiscordNotification(
+        `OAuth tokens have been refreshed successfully.\n\n${expiryMessage}`,
+        "✅ Token Refresh Successful",
+        0x57ab5a // Green color for success
+      );
+
+      const retryMsg =
+        attempt > 0 ? ` after ${attempt} ${attempt === 1 ? "retry" : "retries"}` : "";
+      return `Tokens refreshed successfully${retryMsg}. New expiry: ${expiryTime}`;
+    } catch (error) {
+      lastError = error;
+
+      // Parse and classify the error
+      const { errorCode, errorDescription, rawMessage, hasResponse } =
+        parseTokenRefreshError(error);
+      const classified = classifyTokenError(
+        errorCode,
+        errorDescription,
+        rawMessage,
+        hasResponse
+      );
+
+      // Log error details
+      console.error(`❌ Token refresh failed [${classified.type}]:`, {
+        errorCode: classified.code,
+        errorDescription: classified.description,
+        isRecoverable: classified.isRecoverable,
+        action: classified.action,
+        systemTime: new Date().toISOString(),
+        attempt: attempt + 1,
+        maxRetries: maxRetries + 1,
+      });
+
+      // If not recoverable or out of retries, send Discord and throw
+      if (!classified.isRecoverable || attempt >= maxRetries) {
+        // Send Discord notification with actionable guidance
+        const discordMessage = [
+          `**Error Type:** ${classified.type}`,
+          `**Error Code:** ${classified.code}`,
+          classified.description ? `**Details:** ${classified.description}` : null,
+          `**Recoverable:** ${classified.isRecoverable ? "Yes (will retry)" : "No"}`,
+          "",
+          `**Action Required:** ${classified.action}`,
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+        await sendDiscordNotification(
+          discordMessage,
+          `⚠️ Token Refresh Failed: ${classified.type}`,
+          classified.color
+        );
+
+        throw new Error(
+          `Failed to refresh tokens [${classified.type}]: ${classified.description || rawMessage}`
+        );
+      }
+
+      // For recoverable errors, retry with exponential backoff
+      const backoffMs = Math.min(5000 * Math.pow(2, attempt), 30000); // 5s, 10s, max 30s
+      console.log(
+        `🔄 Retrying token refresh (attempt ${attempt + 1}/${maxRetries}) after ${backoffMs}ms...`
+      );
+      await sleep(backoffMs);
+    }
+  }
+
+  // Should never reach here, but TypeScript needs it
+  throw lastError;
 }
 
 export async function reauthenticate(): Promise<string> {
